@@ -28,6 +28,8 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 
 ## Compile
 
+A python script was implemented to handle compilation with nvcc. Any specific additional flag can be passed as input. For more info, run the script with a "-h" flag. 
+
 ```bash
 ~[root]$ cd compile
 ~[root]/compile$ python3 compile_chfem_gpu.py <options>
