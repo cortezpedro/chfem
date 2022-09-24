@@ -15,6 +15,11 @@ The program follows a matrix-free approach to image-based finite element analysi
 
 Memory efficiency is the north of this project. Our end goal is to be able to run large problems ($10^9$ DOFs) with relatively acessible graphics cards.
 
+## Matrix-free strategies
+
++ Node-by-node
++ Element-by-element
+
 ## Considerations
 
 + Periodic boundary conditions
@@ -24,8 +29,8 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 ## Compile
 
 ```bash
-cd compile
-python3 compile_chfem_gpu.py
+~root$ cd compile
+~root/compile$ python3 compile_chfem_gpu.py <options>
 ```
 
 ## Run
@@ -33,11 +38,19 @@ python3 compile_chfem_gpu.py
 + Linux
 
 ```bash
-./chfem_gpu [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
+~root$ ./chfem_gpu [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
 ```
 
 + Windows
 
 ```bash
-chfem_gpu.exe [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
+~root$ chfem_gpu.exe [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
+```
+
+## Test
+
+```bash
+~root$ cd test
+~root/test$ python3 compile_test.py <options>
+~root/test$ ./test
 ```
