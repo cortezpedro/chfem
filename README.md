@@ -25,7 +25,7 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 
 ```bash
 cd compile
-python3 compile_chfem_gpu.py
+python3 compile_chfem_gpu.py <options>
 ```
 
 ## Run
