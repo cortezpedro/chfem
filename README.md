@@ -29,8 +29,8 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 ## Compile
 
 ```bash
-~root$ cd compile
-~root/compile$ python3 compile_chfem_gpu.py <options>
+~[root]$ cd compile
+~[root]/compile$ python3 compile_chfem_gpu.py <options>
 ```
 
 ## Run
@@ -38,19 +38,19 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 + Linux
 
 ```bash
-~root$ ./chfem_gpu [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
+~[root]$ ./chfem_gpu [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
 ```
 
 + Windows
 
 ```bash
-~root$ chfem_gpu.exe [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
+~[root]$ chfem_gpu.exe [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
 ```
 
 ## Test
 
 ```bash
-~root$ cd test
-~root/test$ python3 compile_test.py <options>
-~root/test$ ./test
+~[root]$ cd test
+~[root]/test$ python3 compile_test.py <options>
+~[root]/test$ ./test
 ```
