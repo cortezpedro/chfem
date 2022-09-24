@@ -1,24 +1,3 @@
-/*
-	Universidade Federal Fluminense (UFF) - Niteroi, Brazil
-	Institute of Computing
-	Authors: Cortez, P., Vianna, R., Sapucaia, V., Pereira., A.
-	History: 
-		* v0.0 (jul/2020) [ALL]    -> OpenMp, parallelization of CPU code
-		* v1.0 (nov/2020) [CORTEZ] -> CUDA, PCG on GPU. (substituted parpcg.h with cudapcg.h)
-
-	API for the handling of FEM models used in
-    material homogenization.
-    Makes use of cudapcg.h to solve linear system
-    of equations.
-
-    ATTENTION.1:
-        Considers a structured regular mesh of quad elements (2D)
-        or hexahedron elements (3D).
-
-    ATTENTION.2:
-        As it is, works for Potential or Elasticity, both 2D or 3D.
-*/
-
 #include "femhmg_3D.h"
 #include "femhmg_elastic_3D.h"
 
@@ -43,10 +22,12 @@ logical initModel_elastic_3D(hmgModel_t *model){
 	model->assembleRHS = assembleRHS_elastic_3D;
 	model->updateC = updateC_elastic_3D;
 	model->printC = printC_elastic_3D;
-	
+	model->saveFields = saveFields_elastic_3D;
+
 	model->assembleNodeDofMap = assembleNodeDofMap_3D;
+	model->assembleDofIdMap = NULL;
 	model->assembleDofMaterialMap = assembleDofMaterialMap_3D;
-	
+
 	return HMG_TRUE;
 }
 //------------------------------------------------------------------------------
@@ -819,6 +800,893 @@ void printC_elastic_3D(hmgModel_t *model, char *dest){
       model->C[30], model->C[31], model->C[32], model->C[33], model->C[34], model->C[35]
     );
   }
+  return;
+}
+//------------------------------------------------------------------------------
+void stressFromDispl_elastic_3D(var *s, var *d, var E, var v, var x, var y, var z){
+
+	var coeff = E/ ((1.0+v)*(1.0-2.0*v));
+	var C[36] = { coeff*(1.0-v), coeff*v, coeff*v, 0.0, 0.0, 0.0,
+						 	  coeff*v, coeff*(1.0-v), coeff*v, 0.0, 0.0, 0.0,
+								coeff*v, coeff*v, coeff*(1.0-v), 0.0, 0.0, 0.0,
+							  0.0, 0.0, 0.0, coeff*0.5*(1.0-2.0*v), 0.0, 0.0,
+							  0.0, 0.0, 0.0, 0.0, coeff*0.5*(1.0-2.0*v), 0.0,
+							  0.0, 0.0, 0.0, 0.0, 0.0, coeff*0.5*(1.0-2.0*v) };
+
+	var x1 = (1.0-x), y1 = (1.0-y), z1 = (1.0-z);
+	var B[144] = { -y1*z, 0.0, 0.0, y1*z, 0.0, 0.0, y*z, 0.0, 0.0, -y*z, 0.0, 0.0, -y1*z1, 0.0, 0.0, y1*z1, 0.0, 0.0, y*z1, 0.0, 0.0, -y*z1, 0.0, 0.0,
+	               0.0, -x1*z, 0.0, 0.0, -x*z, 0.0, 0.0, x*z, 0.0, 0.0, x1*z, 0.0, 0.0, -x1*z1, 0.0, 0.0, -x*z1, 0.0, 0.0, x*z1, 0.0, 0.0, x1*z1, 0.0,
+								 0.0, 0.0, x1*y1, 0.0, 0.0, x*y1, 0.0, 0.0, x*y, 0.0, 0.0, x1*y, 0.0, 0.0, -x1*y1, 0.0, 0.0, -x*y1, 0.0, 0.0, -x*y, 0.0, 0.0, -x1*y,
+								 0.0, x1*y1, -x1*z, 0.0, x*y1, -x*z, 0.0, x*y, x*z, 0.0, x1*y, x1*z, 0.0, -x1*y1, -x1*z1, 0.0, -x*y1, -x*z1, 0.0, -x*y, x*z1, 0.0, -x1*y, x1*z1,
+								 x1*y1, 0.0, -y1*z, x*y1, 0.0, y1*z, x*y, 0.0, y*z, x1*y, 0.0, -y*z, -x1*y1, 0.0, -y1*z1, -x*y1, 0.0, y1*z1, -x*y, 0.0, y*z1, -x1*y, 0.0, -y*z1,
+								 -x1*z, -y1*z, 0.0, -x*z, y1*z, 0.0, x*z, y*z, 0.0, x1*z, -y*z, 0.0, -x1*z1, -y1*z1, 0.0, -x*z1, y1*z1, 0.0, x*z1, y*z1, 0.0, x1*z1, -y*z1, 0.0 };
+
+	var c_x, c_y, c_z, c_yz, c_xz, c_xy;
+	for (unsigned int j=0; j<6; j++){
+		c_x  = 0.0; c_y  = 0.0; c_z  = 0.0;
+		c_yz = 0.0; c_xz = 0.0; c_xy = 0.0;
+		for (unsigned int i=0; i<24; i++){
+			c_x  +=     B[i] * d[i];
+			c_y  +=  B[i+24] * d[i];
+			c_z  +=  B[i+48] * d[i];
+			c_yz +=  B[i+72] * d[i];
+			c_xz +=  B[i+96] * d[i];
+			c_xy += B[i+120] * d[i];
+		}
+		s[j] = C[j*6]*c_x + C[j*6+1]*c_y + C[j*6+2]*c_z + C[j*6+3]*c_yz + C[j*6+4]*c_xz + C[j*6+5]*c_xy;
+	}
+
+	return;
+}
+//------------------------------------------------------------------------------
+void saveFields_elastic_3D(hmgModel_t *model, cudapcgVar_t * D){
+
+  cudapcgVar_t * S = (cudapcgVar_t *)malloc(sizeof(cudapcgVar_t)*(model->m_ndof/3)*6);
+
+  #pragma omp parallel for
+  for (unsigned int i=0; i<(model->m_ndof/3)*6; i++){
+    S[i] = 0.0;
+  }
+
+  unsigned int rows = model->m_ny-1;
+  unsigned int cols = model->m_nx-1;
+	unsigned int lays = model->m_nz-1;
+  unsigned int rowscols = rows*cols;
+
+  //cudapcgVar_t * thisCB;
+  //var d, C_i, C_j, C_k, C_x, C_y, C_z;
+  var E, v;
+  unsigned int n,ii,dof;
+
+  var * local_S = (var *)malloc(sizeof(var)*6);
+  var * local_d = (var *)malloc(sizeof(var)*24);
+
+  for (unsigned int e=0;e<model->m_nelem;e++){
+
+		E = model->props[2*model->elem_material_map[e]];
+		v = model->props[2*model->elem_material_map[e]+1];
+
+		// node 0 (left,bottom,near)
+		n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+		dof = model->node_dof_map[n];
+		local_d[0] = (var) D[dof];
+		local_d[1] = (var) D[dof+1];
+		local_d[2] = (var) D[dof+2];
+
+		// node 1 (right,bottom,near)
+		n+=model->m_ny;
+		dof = model->node_dof_map[n];
+		local_d[3] = (var) D[dof];
+		local_d[4] = (var) D[dof+1];
+		local_d[5] = (var) D[dof+2];
+
+		// node 2 (right,top,near)
+		n-=1;
+		dof = model->node_dof_map[n];
+		local_d[6] = (var) D[dof];
+		local_d[7] = (var) D[dof+1];
+		local_d[8] = (var) D[dof+2];
+
+		// node 3 (left,top,near)
+		n-=model->m_ny;
+		dof = model->node_dof_map[n];
+		local_d[9]  = (var) D[dof];
+		local_d[10] = (var) D[dof+1];
+		local_d[11] = (var) D[dof+2];
+
+		// node 4 (left,bottom,far)
+		n+=1+model->m_nx*model->m_ny;
+		dof = model->node_dof_map[n];
+		local_d[12] = (var) D[dof];
+		local_d[13] = (var) D[dof+1];
+		local_d[14] = (var) D[dof+2];
+
+		// node 5 (right,bottom,far)
+		n+=model->m_ny;
+		dof = model->node_dof_map[n];
+		local_d[15] = (var) D[dof];
+		local_d[16] = (var) D[dof+1];
+		local_d[17] = (var) D[dof+2];
+
+		// node 6 (right,top,far)
+		n-=1;
+		dof = model->node_dof_map[n];
+		local_d[18] = (var) D[dof];
+		local_d[19] = (var) D[dof+1];
+		local_d[20] = (var) D[dof+2];
+
+		// node 7 (left,top,far)
+		n-=model->m_ny;
+		dof = model->node_dof_map[n];
+		local_d[21] = (var) D[dof];
+		local_d[22] = (var) D[dof+1];
+		local_d[23] = (var) D[dof+2];
+
+		dof /= 3;
+		stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,0.0);
+		S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+		S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+		S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+		S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+		S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+		S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+		// node 0 (left,bottom,near)
+		n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+		dof = model->node_dof_map[n]/3;
+		stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,1.0);
+		S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+		S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+		S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+		S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+		S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+		S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+		// node 1 (right,bottom,near)
+		n+=model->m_ny;
+		dof = model->node_dof_map[n]/3;
+		stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,1.0);
+		S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+		S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+		S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+		S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+		S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+		S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+		// node 2 (right,top,near)
+		n-=1;
+		dof = model->node_dof_map[n]/3;
+		stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,1.0);
+		S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+		S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+		S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+		S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+		S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+		S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+		// node 3 (left,top,near)
+		n-=model->m_ny;
+		dof = model->node_dof_map[n]/3;
+		stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,1.0);
+		S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+		S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+		S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+		S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+		S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+		S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+		// node 4 (left,bottom,far)
+		n+=1+model->m_nx*model->m_ny;
+		dof = model->node_dof_map[n]/3;
+		stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,0.0);
+		S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+		S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+		S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+		S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+		S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+		S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+		// node 5 (right,bottom,far)
+		n+=model->m_ny;
+		dof = model->node_dof_map[n]/3;
+		stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,0.0);
+		S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+		S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+		S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+		S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+		S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+		S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+		// node 6 (right,top,far)
+		n-=1;
+		dof = model->node_dof_map[n]/3;
+		stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,0.0);
+		S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+		S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+		S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+		S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+		S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+		S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+	}
+
+	// Compensate for periodic borders
+	unsigned int e;
+	if (model->m_hmg_flag == HOMOGENIZE_X){
+		for (unsigned int l=0; l<lays; l++){
+			for (unsigned int r=0; r<rows; r++){
+				e = r + (rowscols-rows) + l*rowscols;
+
+				E = model->props[2*model->elem_material_map[e]];
+				v = model->props[2*model->elem_material_map[e]+1];
+
+				for (unsigned int i=0; i<24; i++){
+					local_d[i] = 0.0;
+				}
+				local_d[3]  = (var) cols;
+				local_d[6]  = (var) cols;
+				local_d[15] = (var) cols;
+				local_d[18] = (var) cols;
+
+				// node 0 (left,bottom,near)
+				n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 3 (left,top,near)
+				n-=1;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 4 (left,bottom,far)
+				n+=1+model->m_nx*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 7 (left,top,far)
+				n-=1;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				local_d[0]  = -((var) cols); local_d[3]  = 0.0;
+				local_d[9]  = -((var) cols); local_d[6]  = 0.0;
+				local_d[12] = -((var) cols); local_d[15] = 0.0;
+				local_d[21] = -((var) cols); local_d[18] = 0.0;
+
+				// node 1 (right,bottom,near)
+				n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny + model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 2 (right,top,near)
+				n-=1;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 5 (right,bottom,far)
+				n+=1+model->m_nx*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 6 (right,top,far)
+				n-=1;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+			}
+		}
+
+  } else if (model->m_hmg_flag == HOMOGENIZE_Y){
+		for (unsigned int l=0; l<lays; l++){
+			for (unsigned int c=0; c<cols; c++){
+				e = c*rows + l*rowscols;
+
+				E = model->props[2*model->elem_material_map[e]];
+				v = model->props[2*model->elem_material_map[e]+1];
+
+				for (unsigned int i=0; i<24; i++){
+					local_d[i] = 0.0;
+				}
+				local_d[7]  = (var) rows;
+				local_d[10] = (var) rows;
+				local_d[19] = (var) rows;
+				local_d[22] = (var) rows;
+
+				// node 0 (left,bottom,near)
+				n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 1 (right,bottom,near)
+				n+=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 4 (left,bottom,far)
+				n+=(model->m_nx-1)*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 5 (right,bottom,far)
+				n+=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				local_d[1]  = -((var) rows); local_d[7]  = 0.0;
+				local_d[4]  = -((var) rows); local_d[10] = 0.0;
+				local_d[13] = -((var) rows); local_d[19] = 0.0;
+				local_d[16] = -((var) rows); local_d[22] = 0.0;
+
+				// node 2 (right,top,near)
+				n -= 1+model->m_nx*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 3 (left,top,near)
+				n-=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 6 (right,top,far)
+				n+=(model->m_nx+1)*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 7 (left,top,far)
+				n-=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+			}
+		}
+  }  else if (model->m_hmg_flag == HOMOGENIZE_Z){
+		for (e=0; e<rowscols; e++){
+
+			E = model->props[2*model->elem_material_map[e]];
+			v = model->props[2*model->elem_material_map[e]+1];
+
+			for (unsigned int i=0; i<24; i++){
+				local_d[i] = 0.0;
+			}
+			local_d[2]  = (var) lays;
+			local_d[5]  = (var) lays;
+			local_d[8]  = (var) lays;
+			local_d[11] = (var) lays;
+
+			// node 4 (left,bottom,far)
+			n = 1+(e%rowscols)+((e%rowscols)/rows)+(1+e/rowscols)*model->m_nx*model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,0.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 5 (right,bottom,far)
+			n+=model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,0.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 6 (right,top,far)
+			n-=1;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,0.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 7 (left,top,far)
+			n-=model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,0.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			local_d[14] = -((var) lays); local_d[2]  = 0.0;
+			local_d[17] = -((var) lays); local_d[5]  = 0.0;
+			local_d[20] = -((var) lays); local_d[8]  = 0.0;
+			local_d[23] = -((var) lays); local_d[11] = 0.0;
+
+			// node 0 (left,bottom,near)
+			n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,1.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 1 (right,bottom,near)
+			n+=model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,1.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 2 (right,top,near)
+			n-=1;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,1.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 3 (left,top,near)
+			n-=model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,1.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+		}
+  } else if (model->m_hmg_flag == HOMOGENIZE_YZ){
+		for (unsigned int l=0; l<lays; l++){
+			for (unsigned int c=0; c<cols; c++){
+				e = c*rows + l*rowscols;
+
+				E = model->props[2*model->elem_material_map[e]];
+				v = model->props[2*model->elem_material_map[e]+1];
+
+				for (unsigned int i=0; i<24; i++){
+					local_d[i] = 0.0;
+				}
+				local_d[8]  = (var) rows;
+				local_d[11] = (var) rows;
+				local_d[20] = (var) rows;
+				local_d[23] = (var) rows;
+
+				// node 0 (left,bottom,near)
+				n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 1 (right,bottom,near)
+				n+=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 4 (left,bottom,far)
+				n+=(model->m_nx-1)*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 5 (right,bottom,far)
+				n+=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				local_d[2]  = -((var) rows); local_d[8]  = 0.0;
+				local_d[5]  = -((var) rows); local_d[11] = 0.0;
+				local_d[14] = -((var) rows); local_d[20] = 0.0;
+				local_d[17] = -((var) rows); local_d[23] = 0.0;
+
+				// node 2 (right,top,near)
+				n -= 1+model->m_nx*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 3 (left,top,near)
+				n-=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 6 (right,top,far)
+				n+=(model->m_nx+1)*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 7 (left,top,far)
+				n-=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+			}
+		}
+  }  else if (model->m_hmg_flag == HOMOGENIZE_XZ){
+		for (e=0; e<rowscols; e++){
+
+			E = model->props[2*model->elem_material_map[e]];
+			v = model->props[2*model->elem_material_map[e]+1];
+
+			for (unsigned int i=0; i<24; i++){
+				local_d[i] = 0.0;
+			}
+			local_d[0] = (var) lays;
+			local_d[3] = (var) lays;
+			local_d[6] = (var) lays;
+			local_d[9] = (var) lays;
+
+			// node 4 (left,bottom,far)
+			n = 1+(e%rowscols)+((e%rowscols)/rows)+(1+e/rowscols)*model->m_nx*model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,0.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 5 (right,bottom,far)
+			n+=model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,0.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 6 (right,top,far)
+			n-=1;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,0.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 7 (left,top,far)
+			n-=model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,0.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			local_d[12] = -((var) lays); local_d[0] = 0.0;
+			local_d[15] = -((var) lays); local_d[3] = 0.0;
+			local_d[18] = -((var) lays); local_d[6] = 0.0;
+			local_d[21] = -((var) lays); local_d[9] = 0.0;
+
+			// node 0 (left,bottom,near)
+			n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,1.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 1 (right,bottom,near)
+			n+=model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,1.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 2 (right,top,near)
+			n-=1;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,1.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+			// node 3 (left,top,near)
+			n-=model->m_ny;
+			dof = model->node_dof_map[n]/3;
+			stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,1.0);
+			S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+			S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+			S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+			S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+			S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+			S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+		}
+  } else if (model->m_hmg_flag == HOMOGENIZE_XY){
+		for (unsigned int l=0; l<lays; l++){
+			for (unsigned int c=0; c<cols; c++){
+				e = c*rows + l*rowscols;
+
+				E = model->props[2*model->elem_material_map[e]];
+				v = model->props[2*model->elem_material_map[e]+1];
+
+				for (unsigned int i=0; i<24; i++){
+					local_d[i] = 0.0;
+				}
+				local_d[6]  = (var) rows;
+				local_d[9]  = (var) rows;
+				local_d[18] = (var) rows;
+				local_d[21] = (var) rows;
+
+				// node 0 (left,bottom,near)
+				n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 1 (right,bottom,near)
+				n+=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 4 (left,bottom,far)
+				n+=(model->m_nx-1)*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,0.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 5 (right,bottom,far)
+				n+=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,0.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				local_d[0]  = -((var) rows); local_d[6]  = 0.0;
+				local_d[3]  = -((var) rows); local_d[9]  = 0.0;
+				local_d[12] = -((var) rows); local_d[18] = 0.0;
+				local_d[15] = -((var) rows); local_d[21] = 0.0;
+
+				// node 2 (right,top,near)
+				n -= 1+model->m_nx*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 3 (left,top,near)
+				n-=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,1.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 6 (right,top,far)
+				n+=(model->m_nx+1)*model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,1.0,1.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+
+				// node 7 (left,top,far)
+				n-=model->m_ny;
+				dof = model->node_dof_map[n]/3;
+				stressFromDispl_elastic_3D(local_S,local_d,E,v,0.0,1.0,0.0);
+				S[6*dof]   += (cudapcgVar_t) 0.125*local_S[0];
+				S[6*dof+1] += (cudapcgVar_t) 0.125*local_S[1];
+				S[6*dof+2] += (cudapcgVar_t) 0.125*local_S[2];
+				S[6*dof+3] += (cudapcgVar_t) 0.125*local_S[3];
+				S[6*dof+4] += (cudapcgVar_t) 0.125*local_S[4];
+				S[6*dof+5] += (cudapcgVar_t) 0.125*local_S[5];
+			}
+		}
+  }
+
+  // Save arrays to binary files
+  char str_buffer[1024];
+  sprintf(str_buffer,"%s_displacement_%d.bin",model->neutralFile_noExt,model->m_hmg_flag);
+  FILE * file = fopen(str_buffer,"wb");
+  if (file)
+    fwrite(D,sizeof(cudapcgVar_t)*model->m_ndof,1,file);
+  fclose(file);
+
+  sprintf(str_buffer,"%s_stress_%d.bin",model->neutralFile_noExt,model->m_hmg_flag);
+  file = fopen(str_buffer,"wb");
+  if (file)
+    fwrite(S,sizeof(cudapcgVar_t)*(model->m_ndof/3)*6,1,file);
+  fclose(file);
+
+  free(local_S);
+  free(local_d);
+  free(S);
+
   return;
 }
 //------------------------------------------------------------------------------

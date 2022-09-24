@@ -9,26 +9,23 @@
 
 + Thermal conductivity
 + Linear elasticity
++ Permeability
 
 The program follows a matrix-free approach to image-based finite element analysis, exploring GPU resources with CUDA to achieve significant performance gains.
 
 Memory efficiency is the north of this project. Our end goal is to be able to run large problems ($10^9$ DOFs) with relatively acessible graphics cards.
 
-## Matrix-free strategies
-
-+ Node-by-node
-+ Element-by-element
-
 ## Considerations
 
 + Periodic boundary conditions
 + Linear shape functions for finite elements
++ Numerical stabilization for stokes flow
 
 ## Compile
 
 ```bash
 cd compile
-python3 compile_chfem_gpu.py <options>
+python3 compile_chfem_gpu.py
 ```
 
 ## Run

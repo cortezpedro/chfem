@@ -1,24 +1,3 @@
-/*
-	Universidade Federal Fluminense (UFF) - Niteroi, Brazil
-	Institute of Computing
-	Authors: Cortez, P., Vianna, R., Sapucaia, V., Pereira., A.
-	History: 
-		* v0.0 (jul/2020) [ALL]    -> OpenMp, parallelization of CPU code
-		* v1.0 (nov/2020) [CORTEZ] -> CUDA, PCG on GPU. (substituted parpcg.h with cudapcg.h)
-
-	API for the handling of FEM models used in
-    material homogenization.
-    Makes use of cudapcg.h to solve linear system
-    of equations.
-
-    ATTENTION.1:
-        Considers a structured regular mesh of quad elements (2D)
-        or hexahedron elements (3D).
-
-    ATTENTION.2:
-        As it is, works for Potential or Elasticity, both 2D or 3D.
-*/
-
 #include "femhmg_2D.h"
 #include "femhmg_thermal_2D.h"
 
@@ -43,8 +22,10 @@ logical initModel_thermal_2D(hmgModel_t *model){
 	model->assembleRHS = assembleRHS_thermal_2D;
 	model->updateC = updateC_thermal_2D;
 	model->printC = printC_thermal_2D;
-	
+	model->saveFields = saveFields_thermal_2D;
+
 	model->assembleNodeDofMap = assembleNodeDofMap_2D;
+	model->assembleDofIdMap = NULL;
 	model->assembleDofMaterialMap = assembleDofMaterialMap_2D;
 
 	return HMG_TRUE;
@@ -264,5 +245,81 @@ void printC_thermal_2D(hmgModel_t *model, char *dest){
     );
   }
 	return;
+}
+//------------------------------------------------------------------------------
+void saveFields_thermal_2D(hmgModel_t *model, cudapcgVar_t * T){
+
+  cudapcgVar_t * Q = (cudapcgVar_t *)malloc(sizeof(cudapcgVar_t)*model->m_ndof*2);
+
+  unsigned int rows = model->m_ny-1;
+  unsigned int cols = model->m_nx-1;
+  unsigned int rowscols = rows*cols;
+
+  unsigned int n_front, n_back;
+
+  // Grad(T) X
+  #pragma omp parallel for private(n_front,n_back)
+  for (unsigned int n=0; n<model->m_ndof; n++){
+    n_front = (n+rows)%rowscols; // WALK_RIGHT
+    n_back  = (n+(cols-1)*rows)%rowscols; // WALK_LEFT
+    Q[2*n] = 0.5*(T[n_front]-T[n_back])/model->m_elem_size;
+  }
+
+  // Grad(T) Y
+  #pragma omp parallel for private(n_front,n_back)
+  for (unsigned int n=0; n<model->m_ndof; n++){
+    n_front = n+(-1+rows*(!(n%rows))); // WALK_UP
+    n_back  = n+( 1-rows*(!((n+1)%rows))); // WALK_DOWN
+    Q[2*n+1] = 0.5*(T[n_front]-T[n_back])/model->m_elem_size;
+  }
+
+	// Compensate for periodic borders
+  if (model->m_hmg_flag == HOMOGENIZE_X){
+		for (unsigned int n=0; n<rows; n++){
+			Q[2*n] += 0.5*cols/model->m_elem_size;
+		}
+		for (unsigned int n=(rowscols-rows); n<rowscols; n++){
+			Q[2*n] += 0.5*cols/model->m_elem_size;
+		}
+  } else if (model->m_hmg_flag == HOMOGENIZE_Y){
+		for (unsigned int n=0; n<(rowscols-rows+1); n+=rows){
+			Q[2*n+1] += 0.5*rows/model->m_elem_size;
+		}
+		for (unsigned int n=(rows-1); n<rowscols; n+=rows){
+			Q[2*n+1] += 0.5*rows/model->m_elem_size;
+		}
+  }
+
+  // Q = -kappa * Grad(T)
+  cudapcgMap_t matkey;
+  var kappa;
+  #pragma omp parallel for private(matkey,kappa)
+  for (unsigned int n=0; n<model->m_ndof; n++){
+    matkey = model->dof_material_map[n];
+    kappa  = model->props[matkey&MATKEY_BITSTEP_RANGE_2D];
+    kappa += model->props[(matkey>>=MATKEY_BITSTEP_2D)&MATKEY_BITSTEP_RANGE_2D];
+    kappa += model->props[(matkey>>=MATKEY_BITSTEP_2D)&MATKEY_BITSTEP_RANGE_2D];
+    kappa += model->props[(matkey>>=MATKEY_BITSTEP_2D)&MATKEY_BITSTEP_RANGE_2D];
+    Q[2*n]   *= -0.25*kappa;
+    Q[2*n+1] *= -0.25*kappa;
+  }
+
+  // Save arrays to binary files
+  char str_buffer[1024];
+  sprintf(str_buffer,"%s_temperature_%d.bin",model->neutralFile_noExt,model->m_hmg_flag);
+  FILE * file = fopen(str_buffer,"wb");
+  if (file)
+    fwrite(T,sizeof(cudapcgVar_t)*model->m_ndof,1,file);
+  fclose(file);
+
+  sprintf(str_buffer,"%s_flux_%d.bin",model->neutralFile_noExt,model->m_hmg_flag);
+  file = fopen(str_buffer,"wb");
+  if (file)
+    fwrite(Q,sizeof(cudapcgVar_t)*model->m_ndof*2,1,file);
+  fclose(file);
+
+  free(Q);
+
+  return;
 }
 //------------------------------------------------------------------------------

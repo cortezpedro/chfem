@@ -1,17 +1,3 @@
-/*
-    Universidade Federal Fluminense (UFF) - Niteroi, Brazil
-    Institute of Computing
-    Authors: Cortez, P., Vianna, R.
-    History: 
-		* v0.0 (jul/2020) [ALL]    -> OpenMp, parallelization of CPU code
-		* v1.0 (nov/2020) [CORTEZ] -> CUDA, PCG on GPU
-
-    Includes header for FEM homogenization of physical properties from micro-CT
-    images, in binary grayscale representation.
-
-    Meant for "femhmg" and "cudapcg".
-*/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,16 +12,30 @@ typedef struct _input{
   char * neutral_file;
   char * raw_file;
   
+  unsigned char exportFields_flag;
+  unsigned char fieldsByElem_flag;
+
   unsigned char save2binary_flag;
   char * binary_file;
-  
+
   unsigned char writeReport_flag;
   char * report_file;
+
+  unsigned char exportX_flag;
+  unsigned char importX_flag;
+  char * x0_file;
+
+  unsigned int pcg_stopcrit_flag;
+
+  unsigned int poremap_flag;
+
   
+
   unsigned int hmg_direction_flag; //hmgFlag_t
+  unsigned int solver_flag; //cudapcgFlag_t
   unsigned int parallel_flag; //cudapcgFlag_t
   unsigned int num_of_recursions_initguess;
-  
+
 } chfemgpuInput_t;
 
 //------------------------------------------------------------------------------

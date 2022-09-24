@@ -19,7 +19,7 @@ def handle_error(cmd):
 #--------------------------------------------------------------------------- 
 def printVersion():
   print('LCC - UFF')
-  print('Python script to compile chfem_gpu. Version 2.0 (2020-2021)')
+  print('Python script to compile chfem_gpu. Version 1.1 (2020-2022)')
 #---------------------------------------------------------------------------
 def printHelp():
   printVersion()
@@ -31,8 +31,8 @@ def printHelp():
   print('\t(-n or --name) <string> : provide executable name.')
   print('\t <additional flags for the nvcc compiler> :')
   print('\t\t-DCUDAPCG_QUIET_ITERATIONS')
-  print('\t\t-DCUDAPCG_VAR_32BIT ------- (default)')
-  print('\t\t-DCUDAPCG_VAR_64BIT')
+  print('\t\t-DCUDAPCG_VAR_32BIT')
+  print('\t\t-DCUDAPCG_VAR_64BIT ------- (default)')
   print('\t\t-DCUDAPCG_MATKEY_8BIT')
   print('\t\t-DCUDAPCG_MATKEY_16BIT ---- (default)')
   print('\t\t-DCUDAPCG_MATKEY_32BIT')
@@ -45,6 +45,7 @@ def printHelp():
   print('\t\t-DCUDAPCG_BLOCKDIM_1024')
   print('\t\t-DELASTIC_2D_PLANESTRAIN -- (default)')
   print('\t\t-DELASTIC_2D_PLANESTRESS')
+  print('\t\t-DCUDAPCG_TRACK_STOPCRIT')
 #---------------------------------------------------------------------------
 def checkInput():
 
@@ -85,12 +86,9 @@ def extractFilename(filepath):
   return os.path.splitext(filename)[0]
 #---------------------------------------------------------------------------
 
-#-------------------------
-##########################
-########## main ##########
-##########################
-#-------------------------
-
+#--------------
+#---- main ----
+#--------------
 
 if __name__ == '__main__':
 
@@ -176,5 +174,5 @@ if __name__ == '__main__':
   
   # print feedback that compiling went ok  
   print('{} binary executable successfully compiled.'.format(executable_name))
- 
- 
+#---------------------------------------------------------------------------
+

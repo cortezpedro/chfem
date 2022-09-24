@@ -1,26 +1,31 @@
 /*
-    Universidade Federal Fluminense (UFF) - Niteroi, Brazil
-    Institute of Computing
-    Author: Cortez, P.
-    History: v1.0 (november/2020)
+  =====================================================================
+  Universidade Federal Fluminense (UFF) - Niteroi, Brazil
+  Institute of Computing
+  Authors: Cortez Lopes, P., Pereira., A.
+  contact: pedrocortez@id.uff.br
 
-    API with wrapper CPU functions to call CUDA kernels
-    used by cudapcg.h
-    
-    CUDA kernels are implemented here.
+  [cudapcg]
+  
+  History:
+    * v1.0 (nov/2020) [CORTEZ] -> CUDA, PCG in GPU
+    * v1.1 (sep/2022) [CORTEZ] -> Added permeability, MINRES.
+                                  atomicAdd for EBE.
+                                  refactoring of kernels for readability.
+  
+  Pre-history:
+    Initially developed as a final work for the graduate course "Arquitetura
+    e Programacao de GPUs", at the Institute of Computing, UFF.
 
-    History:
-        Initially developed as a final work for the graduate course "Arquitetura
-        e Programacao de GPUs", at the Institute of Computing, UFF.
+  API for solving linear systems associated to FEM models with an matrix-free
+  solvers, using CUDA. All global matrix operations involve "assembly on-the-fly"
 
-    ATTENTION.1:
-        Considers a structured regular mesh of quad elements (2D)
-        or hexahedron elements (3D).
+  THERMAL CONDUCTIVITY, LINEAR ELASTICITY, ABSOLUTE PERMEABILITY.
+  
+  General purpose kernels are implemented here.
+  Host wrappers for NBN and EBE kernels are also implemented here.
 
-    ATTENTION.2:
-        As it is, this API is not generic, for any Ax = b. Linear systems must
-        be associated to FEM homogenization problems, for Potential or
-        Elasticity, both 2D or 3D.
+  =====================================================================
 */
 
 #include "cudapcg_kernels_wrappers.h"
@@ -38,12 +43,11 @@
   cudapcgVar_t *K = NULL; // for larger ranges of matkeys, store local matrices in device global memory
 #endif
 
-cudapcgVar_t *M=NULL; // array for jacobi preconditioner (stored in GPU). Obs.: Not necessarily allocated.
+cudapcgVar_t *M=NULL; // array for jacobi preconditioner (stored in GPU). Obs.: Only allocated if explictly requested.
 
-cudapcgVar_t *dot_res_1=NULL, *dot_res_2=NULL; // needed for reduction on dotprod
+double *dot_res_1=NULL, *dot_res_2=NULL; // needed for reduction on dotprod
 
-cudapcgFlag_t flag_PreConditionerWasAssembled = 0;
-cudapcgFlag_t flag_assemblyMode = 0; // 0 (N), 1 (E)
+cudapcgFlag_t flag_PreConditionerWasAssembled = CUDAPCG_FALSE;
 
 //---------------------------------
 ///////////////////////////////////
@@ -55,8 +59,8 @@ cudapcgFlag_t flag_assemblyMode = 0; // 0 (N), 1 (E)
 /*
     Relatively standard kernels, to perform
     vector operations. These are all generic
-    (no compromises to the homogenization
-    analysis)
+    (no compromises with the image-based
+    matrix-free approach)
 */
 
 //------------------------------------------------------------------------------
@@ -74,16 +78,16 @@ __global__ void kernel_zeros(cudapcgVar_t * v, unsigned int dim){
         v[i] = 0.0;
 }
 //------------------------------------------------------------------------------
-// Kernel to perform dot product between two vectors, using shared mem
-__global__ void kernel_dotprod(cudapcgVar_t * v1, cudapcgVar_t * v2, unsigned int dim, cudapcgVar_t * res){
+// Kernel to get max absolute value within an array in gpu
+__global__ void kernel_absmax(cudapcgVar_t *v, unsigned int dim, double *res){
   // Get local and global thread index
   unsigned int li = threadIdx.x;
   unsigned int gi = li + blockIdx.x * blockDim.x;
   // shmem cache
-  __shared__ cudapcgVar_t cache[THREADS_PER_BLOCK]; 
+  __shared__ cudapcgVar_t cache[THREADS_PER_BLOCK];
   // Fill cache
   if (gi<dim)
-    cache[li] = v1[gi]*v2[gi];
+    cache[li] = CUDA_ABS(v[gi]);
   else
     cache[li] = 0.0; // for safety
   __syncthreads();
@@ -92,7 +96,34 @@ __global__ void kernel_dotprod(cudapcgVar_t * v1, cudapcgVar_t * v2, unsigned in
   // Keep going until stride is 0 (finished adding 2by2)
   while(stride){
     if (li < stride)
-      cache[li]+=cache[li+stride];
+      cache[li] = cache[li+stride] > cache[li] ? cache[li+stride] : cache[li];
+    __syncthreads();
+    stride/=2;
+  }
+  // Put cache results into result global mem arr
+  if (li==0)
+    res[blockIdx.x] = (double)cache[0];
+}
+//------------------------------------------------------------------------------
+// Kernel to get max absolute value within an array in gpu
+__global__ void kernel_absmax_double(double *v, unsigned int dim, double *res){
+  // Get local and global thread index
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  // shmem cache
+  __shared__ double cache[THREADS_PER_BLOCK];
+  // Fill cache
+  if (gi<dim)
+    cache[li] = fabs(v[gi]);
+  else
+    cache[li] = 0.0; // for safety
+  __syncthreads();
+  // Init stride var
+  unsigned int stride = THREADS_PER_BLOCK/2;
+  // Keep going until stride is 0 (finished adding 2by2)
+  while(stride){
+    if (li < stride)
+      cache[li] = cache[li+stride] > cache[li] ? cache[li+stride] : cache[li];
     __syncthreads();
     stride/=2;
   }
@@ -102,12 +133,39 @@ __global__ void kernel_dotprod(cudapcgVar_t * v1, cudapcgVar_t * v2, unsigned in
 }
 //------------------------------------------------------------------------------
 // Kernel to perform reduction of a vector, using shared mem
-__global__ void kernel_reduce(cudapcgVar_t * v, unsigned int dim, cudapcgVar_t * res){
+__global__ void kernel_reduce(cudapcgVar_t * v, unsigned int dim, double * res){
     // Get local and global thread index
     unsigned int li = threadIdx.x;
     unsigned int gi = li + blockIdx.x * blockDim.x;
     // shmem cache
-    __shared__ cudapcgVar_t cache[THREADS_PER_BLOCK]; 
+    __shared__ double cache[THREADS_PER_BLOCK];
+    // Fill cache
+    if (gi<dim)
+      cache[li] = (double) v[gi];
+    else
+      cache[li] = 0.0; // for safety
+    __syncthreads();
+    // Init stride cudapcgVar_t
+    unsigned int stride = THREADS_PER_BLOCK/2;
+    // Keep going until stride is 0 (finished adding 2by2)
+    while(stride){
+      if (li < stride)
+        cache[li]+=cache[li+stride];
+      __syncthreads();
+      stride/=2;
+    }
+    // Put cache results into result global mem arr
+    if (li==0)
+      res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// Kernel to perform reduction of a vector, using shared mem
+__global__ void kernel_reduce_double(double * v, unsigned int dim, double * res){
+    // Get local and global thread index
+    unsigned int li = threadIdx.x;
+    unsigned int gi = li + blockIdx.x * blockDim.x;
+    // shmem cache
+    __shared__ double cache[THREADS_PER_BLOCK];
     // Fill cache
     if (gi<dim)
       cache[li] = v[gi];
@@ -126,6 +184,60 @@ __global__ void kernel_reduce(cudapcgVar_t * v, unsigned int dim, cudapcgVar_t *
     // Put cache results into result global mem arr
     if (li==0)
       res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// Kernel to perform reduction of a vector, using shared mem
+__global__ void kernel_absreduce(cudapcgVar_t * v, unsigned int dim, double * res){
+    // Get local and global thread index
+    unsigned int li = threadIdx.x;
+    unsigned int gi = li + blockIdx.x * blockDim.x;
+    // shmem cache
+    __shared__ double cache[THREADS_PER_BLOCK];
+    // Fill cache
+    if (gi<dim)
+      cache[li] = (double) CUDA_ABS(v[gi]);
+    else
+      cache[li] = 0.0; // for safety
+    __syncthreads();
+    // Init stride cudapcgVar_t
+    unsigned int stride = THREADS_PER_BLOCK/2;
+    // Keep going until stride is 0 (finished adding 2by2)
+    while(stride){
+      if (li < stride)
+        cache[li]+=cache[li+stride];
+      __syncthreads();
+      stride/=2;
+    }
+    // Put cache results into result global mem arr
+    if (li==0)
+      res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// Kernel to perform dot product between two vectors, using shared mem
+__global__ void kernel_dotprod(cudapcgVar_t * v1, cudapcgVar_t * v2, unsigned int dim, double * res){
+  // Get local and global thread index
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  // shmem cache
+  __shared__ double cache[THREADS_PER_BLOCK];
+  // Fill cache
+  if (gi<dim)
+    cache[li] = (double) (v1[gi]*v2[gi]);
+  else
+    cache[li] = 0.0; // for safety
+  __syncthreads();
+  // Init stride var
+  unsigned int stride = THREADS_PER_BLOCK/2;
+  // Keep going until stride is 0 (finished adding 2by2)
+  while(stride){
+    if (li < stride)
+      cache[li]+=cache[li+stride];
+    __syncthreads();
+    stride/=2;
+  }
+  // Put cache results into result global mem arr
+  if (li==0)
+    res[blockIdx.x] = cache[0];
 }
 //------------------------------------------------------------------------------
 // Kernel to perform term-by-term multiplication between two vectors
@@ -155,23 +267,23 @@ __global__ void kernel_termbyterminv(cudapcgVar_t * v, unsigned int dim){
     v[i] = 1/v[i];
 }
 //------------------------------------------------------------------------------
-// Kernel to sum two vectors, considering a scalar multiplier. res = v1 + scl*v2
-__global__ void kernel_sumVec(cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgVar_t * res){
+// Kernel to sum two vectors, considering a scalar multiplier. res = y + a*x
+__global__ void kernel_saxpy(cudapcgVar_t * y, cudapcgVar_t * x, cudapcgVar_t a, unsigned int dim, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
   if (i<dim)
-    res[i] = v1[i] + scl*v2[i];
+    res[i] = y[i] + a*x[i];
 }
 //------------------------------------------------------------------------------
-// Kernel to sum two vectors, considering a scalar multiplier. 
-// Result is stored into first array -> v1 += scl*v2
-__global__ void kernel_sumVecIntoFirst(cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim){
+// Kernel to sum two vectors, considering a scalar multiplier.
+// Result is stored into first array -> y += a*x
+__global__ void kernel_saxpy_iny(cudapcgVar_t * y, cudapcgVar_t * x, cudapcgVar_t a, unsigned int dim){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
   if (i<dim)
-    v1[i] += scl*v2[i];
+    y[i] += a*x[i];
 }
 //------------------------------------------------------------------------------
 
@@ -251,7 +363,7 @@ __global__ void kernel_interpl_cols(cudapcgVar_t * v, unsigned int nx, unsigned 
     unsigned int idx;
     // Check if must interpolate cols
     if ((jj&1) && !(kk&1)){
-      idx = WALK_LEFT((i%(nx*ny)),nx,ny,(nx*ny)) + kk*(nx*ny);
+      idx = WALK_LEFT((i%(nx*ny)),ny,(nx*ny)) + kk*(nx*ny);
       for (unsigned int j=0; j<nLocalDOFs; j++)
         v[nLocalDOFs*i+j]  = 0.5*v[nLocalDOFs*idx+j];
       idx = WALK_RIGHT((i%(nx*ny)),ny,(nx*ny)) + kk*(nx*ny);
@@ -274,7 +386,7 @@ __global__ void kernel_interpl_layers(cudapcgVar_t * v, unsigned int nx, unsigne
     unsigned int idx;
     // Check if must interpolate layers
     if (kk&1){
-      idx = WALK_NEAR(i,(nx*ny),nz,(nx*ny*nz));
+      idx = WALK_NEAR(i,(nx*ny),(nx*ny*nz));
       for (unsigned int j=0; j<nLocalDOFs; j++)
         v[nLocalDOFs*i+j]  = 0.5*v[nLocalDOFs*idx+j];
       idx = WALK_FAR(i,(nx*ny),(nx*ny*nz));
@@ -287,19 +399,45 @@ __global__ void kernel_interpl_layers(cudapcgVar_t * v, unsigned int nx, unsigne
 
 //---------------------------------
 ///////////////////////////////////
+//////// PRIVATE FUNCTIONS ////////
+///////////////////////////////////
+//---------------------------------
+
+//------------------------------------------------------------------------------
+double reduce_dot_res_1(unsigned int dim){ // dim: dimension of the vector that has been reduced to dot_res_1
+    unsigned int blockDim = THREADS_PER_BLOCK;
+    unsigned int gridDim = CEIL(dim,blockDim);
+    unsigned int isRes1or2 = 1;
+    while(dim > THREADS_PER_BLOCK){
+      dim = gridDim;
+      gridDim = CEIL(dim,blockDim);
+      if (isRes1or2 == 1)
+        kernel_reduce_double<<<gridDim,blockDim>>>(dot_res_1,dim,dot_res_2);
+      else
+        kernel_reduce_double<<<gridDim,blockDim>>>(dot_res_2,dim,dot_res_1);
+      isRes1or2 = (isRes1or2+1)%2;
+    }
+    double res;
+    if (isRes1or2 == 1){
+      HANDLE_ERROR(cudaMemcpy(&res,dot_res_1,sizeof(double),cudaMemcpyDeviceToHost));
+    } else {
+      HANDLE_ERROR(cudaMemcpy(&res,dot_res_2,sizeof(double),cudaMemcpyDeviceToHost));
+    }
+    return res;
+}
+
+//---------------------------------
+///////////////////////////////////
 //////// PUBLIC FUNCTIONS /////////
 ///////////////////////////////////
 //---------------------------------
 
 //------------------------------------------------------------------------------
-void setParallelAssemblyFlag(cudapcgFlag_t flag){ flag_assemblyMode = flag; }
-cudapcgFlag_t getParallelAssemblyFlag(){ return flag_assemblyMode; }
-//------------------------------------------------------------------------------
 void allocDotProdArrs(unsigned int dim){
-    unsigned int sz = sizeof(cudapcgVar_t)*CEIL(dim,THREADS_PER_BLOCK);
+    unsigned int sz = sizeof(double)*CEIL(dim,THREADS_PER_BLOCK);
     HANDLE_ERROR(cudaMalloc(&dot_res_1,sz));
-    sz/=sizeof(cudapcgVar_t);
-    sz = sizeof(cudapcgVar_t)*CEIL(sz,THREADS_PER_BLOCK);
+    sz/=sizeof(double);
+    sz = sizeof(double)*CEIL(sz,THREADS_PER_BLOCK);
     HANDLE_ERROR(cudaMalloc(&dot_res_2,sz));
     return;
 }
@@ -342,37 +480,47 @@ void arrcpy(cudapcgVar_t * res, cudapcgVar_t * v, unsigned int dim){
     return;
 }
 //------------------------------------------------------------------------------
-void arrcpy_stream(cudapcgVar_t * res, cudapcgVar_t * v, unsigned int dim, cudaStream_t stream){
-    kernel_arrcpy<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK,0,stream>>>(v,res,dim);
-    return;
-}
-//------------------------------------------------------------------------------
 void zeros(cudapcgVar_t * v, unsigned int dim){
     kernel_zeros<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim);
     return;
 }
 //------------------------------------------------------------------------------
-cudapcgVar_t dotprod(cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim){
+cudapcgVar_t absmax(cudapcgVar_t *v, unsigned int dim){
     unsigned int blockDim = THREADS_PER_BLOCK;
     unsigned int gridDim = CEIL(dim,blockDim);
-    kernel_dotprod<<<gridDim,blockDim>>>(v1,v2,dim,dot_res_1);
+    kernel_absmax<<<gridDim,blockDim>>>(v,dim,dot_res_1);
     unsigned int isRes1or2 = 1;
     while(dim > THREADS_PER_BLOCK){
       dim = gridDim;
       gridDim = CEIL(dim,blockDim);
       if (isRes1or2 == 1)
-        kernel_reduce<<<gridDim,blockDim>>>(dot_res_1,dim,dot_res_2);
+        kernel_absmax_double<<<gridDim,blockDim>>>(dot_res_1,dim,dot_res_2);
       else
-        kernel_reduce<<<gridDim,blockDim>>>(dot_res_2,dim,dot_res_1);
+        kernel_absmax_double<<<gridDim,blockDim>>>(dot_res_2,dim,dot_res_1);
       isRes1or2 = (isRes1or2+1)%2;
     }
-    cudapcgVar_t res;
+    double res;
     if (isRes1or2 == 1){
-      HANDLE_ERROR(cudaMemcpy(&res,dot_res_1,sizeof(cudapcgVar_t),cudaMemcpyDeviceToHost));
+      HANDLE_ERROR(cudaMemcpy(&res,dot_res_1,sizeof(double),cudaMemcpyDeviceToHost));
     } else {
-      HANDLE_ERROR(cudaMemcpy(&res,dot_res_2,sizeof(cudapcgVar_t),cudaMemcpyDeviceToHost));
+      HANDLE_ERROR(cudaMemcpy(&res,dot_res_2,sizeof(double),cudaMemcpyDeviceToHost));
     }
-    return res;
+    return (cudapcgVar_t)res;
+}
+//------------------------------------------------------------------------------
+double reduce(cudapcgVar_t *v, unsigned int dim){
+    kernel_reduce<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim,dot_res_1);
+    return reduce_dot_res_1(dim);
+}
+//------------------------------------------------------------------------------
+double absreduce(cudapcgVar_t *v, unsigned int dim){
+    kernel_absreduce<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim,dot_res_1);
+    return reduce_dot_res_1(dim);
+}
+//------------------------------------------------------------------------------
+double dotprod(cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim){
+    kernel_dotprod<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v1,v2,dim,dot_res_1);
+    return reduce_dot_res_1(dim);
 }
 //------------------------------------------------------------------------------
 void termbytermmul(cudapcgVar_t * v1, cudapcgVar_t * v2, unsigned int dim, cudapcgVar_t * res){
@@ -390,18 +538,13 @@ void termbyterminv(cudapcgVar_t * v, unsigned int dim){
     return;
 }
 //------------------------------------------------------------------------------
-void sumVec(cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgVar_t * res){
-    kernel_sumVec<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v1,v2,scl,dim,res);
+void saxpy(cudapcgVar_t * y, cudapcgVar_t * x, cudapcgVar_t a, unsigned int dim, cudapcgVar_t * res){
+    kernel_saxpy<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(y,x,a,dim,res);
     return;
 }
 //------------------------------------------------------------------------------
-void sumVec_stream(cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgVar_t * res, cudaStream_t stream){
-    kernel_sumVec<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK,0,stream>>>(v1,v2,scl,dim,res);
-    return;
-}
-//------------------------------------------------------------------------------
-void sumVecIntoFirst(cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim){
-    kernel_sumVecIntoFirst<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v1,v2,scl,dim);
+void saxpy_iny(cudapcgVar_t * y, cudapcgVar_t * x, cudapcgVar_t a, unsigned int dim){
+    kernel_saxpy_iny<<<CEIL(dim,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(y,x,a,dim);
     return;
 }
 //------------------------------------------------------------------------------
@@ -422,120 +565,132 @@ void allocPreConditioner(cudapcgModel_t *m){
 //------------------------------------------------------------------------------
 void freePreConditioner(){
     if (M!=NULL) HANDLE_ERROR(cudaFree(M)); M=NULL;
-    flag_PreConditionerWasAssembled = 0;
+    flag_PreConditionerWasAssembled = CUDAPCG_FALSE;
     return;
 }
 //------------------------------------------------------------------------------
 void assemblePreConditioner_thermal_2D(cudapcgModel_t *m){
-    if (flag_assemblyMode == 0)
+    if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_assemblePreConditioner_thermal_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				M,m->nvars,m->image);
-    else if (flag_assemblyMode == 1){
-      kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,m->nvars);
-      for (unsigned int j=0; j<4; j++)
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        M,m->nvars,m->image);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
         kernel_assemblePreConditioner_thermal_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				j,M,m->nelem,m->image,m->nrows);
-      kernel_termbyterminv<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,m->nvars);
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        M,m->nelem,m->image,m->ncols,m->nrows);
     }
-    flag_PreConditionerWasAssembled = 1;
+    flag_PreConditionerWasAssembled = CUDAPCG_TRUE;
     return;
 }
 //------------------------------------------------------------------------------
 void assemblePreConditioner_thermal_3D(cudapcgModel_t *m){
-    if (flag_assemblyMode == 0)
+    if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_assemblePreConditioner_thermal_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				M,m->nvars,m->image);
-    else if (flag_assemblyMode == 1){
-      kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,m->nvars);
-      for (unsigned int j=0; j<8; j++)
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        M,m->nvars,m->image);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
         kernel_assemblePreConditioner_thermal_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				j,M,m->nelem,m->image,m->ncols,m->nrows);
-      kernel_termbyterminv<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,m->nvars);
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        M,m->nelem,m->image,m->ncols,m->nrows,m->nlayers);
     }
-    flag_PreConditionerWasAssembled = 1;
+    flag_PreConditionerWasAssembled = CUDAPCG_TRUE;
     return;
 }
 //------------------------------------------------------------------------------
 void assemblePreConditioner_elastic_2D(cudapcgModel_t *m){
-    if (flag_assemblyMode == 0)
+    if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_assemblePreConditioner_elastic_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				M,m->nvars,m->image);
-    else if (flag_assemblyMode == 1){
-      kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,m->nvars);
-      for (unsigned int j=0; j<4; j++)
-        kernel_assemblePreConditioner_elastic_2D_ElemByElem<<<CEIL(2*m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				j,M,m->nelem,m->image,m->nrows);
-      kernel_termbyterminv<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,m->nvars);
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        M,m->nvars,m->image);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+      kernel_assemblePreConditioner_elastic_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        M,m->nelem,m->image,m->ncols,m->nrows);
     }
-    flag_PreConditionerWasAssembled = 1;
+    flag_PreConditionerWasAssembled = CUDAPCG_TRUE;
     return;
 }
 //------------------------------------------------------------------------------
 void assemblePreConditioner_elastic_3D(cudapcgModel_t *m){
-    if (flag_assemblyMode == 0)
+    if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_assemblePreConditioner_elastic_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				M,m->nvars,m->image);
-    else if (flag_assemblyMode == 1){
-      kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,m->nvars);
-      for (unsigned int j=0; j<8; j++)
-        kernel_assemblePreConditioner_elastic_3D_ElemByElem<<<CEIL(3*m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				j,M,m->nelem,m->image,m->ncols,m->nrows);
-      kernel_termbyterminv<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,m->nvars);
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        M,m->nvars,m->image);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+      kernel_assemblePreConditioner_elastic_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        M,m->nelem,m->image,m->ncols,m->nrows,m->nlayers);
     }
-    flag_PreConditionerWasAssembled = 1;
+    flag_PreConditionerWasAssembled = CUDAPCG_TRUE;
     return;
 }
 //------------------------------------------------------------------------------
 void applyPreConditioner_thermal_2D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl, cudapcgVar_t *res){
     if (flag_PreConditionerWasAssembled){
         kernel_termbytermmul<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,v1,m->nvars,res);
-    } else if (flag_assemblyMode == 0){
-        kernel_applyPreConditioner_thermal_2D_NodeByNode<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				v1,v2,scl,m->nvars,m->image,res);
+        if (v2 != NULL && scl != 0.0)
+          kernel_saxpy_iny<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,v2,scl,m->nvars);
+        return;
     }
+    if (v2==NULL) v2=v1;
+    if (m->parStrategy_flag == CUDAPCG_NBN){
+      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+      kernel_applyPreConditioner_thermal_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v1,v2,scl,m->nvars,m->image,res);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+      kernel_applyPreConditioner_thermal_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,res);
+    } 
     return;
 }
 //------------------------------------------------------------------------------
 void applyPreConditioner_thermal_3D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl, cudapcgVar_t *res){
     if (flag_PreConditionerWasAssembled){
-      kernel_termbytermmul<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,v1,m->nvars,res);
-    } else if (flag_assemblyMode == 0) {
-        kernel_applyPreConditioner_thermal_3D_NodeByNode<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				v1,v2,scl,m->nvars,m->image,res);
+        kernel_termbytermmul<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,v1,m->nvars,res);
+        if (v2 != NULL && scl != 0.0)
+          kernel_saxpy_iny<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,v2,scl,m->nvars);
+        return;
+    }
+    if (v2==NULL) v2=v1;
+    if (m->parStrategy_flag == CUDAPCG_NBN){
+      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+      kernel_applyPreConditioner_thermal_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v1,v2,scl,m->nvars,m->image,res);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+      kernel_applyPreConditioner_thermal_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res);
     }
     return;
 }
@@ -543,13 +698,24 @@ void applyPreConditioner_thermal_3D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcg
 void applyPreConditioner_elastic_2D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl, cudapcgVar_t *res){
     if (flag_PreConditionerWasAssembled){
         kernel_termbytermmul<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,v1,m->nvars,res);
-    } else if (flag_assemblyMode == 0){
-        // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-        kernel_applyPreConditioner_elastic_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				v1,v2,scl,m->nvars,m->image,res);
+        if (v2 != NULL && scl != 0.0)
+          kernel_saxpy_iny<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,v2,scl,m->nvars);
+        return;
+    }
+    if (v2==NULL) v2=v1;
+    if (m->parStrategy_flag == CUDAPCG_NBN){
+      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+      kernel_applyPreConditioner_elastic_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v1,v2,scl,m->nvars,m->image,res);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+      kernel_applyPreConditioner_elastic_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,res);
     }
     return;
 }
@@ -557,116 +723,237 @@ void applyPreConditioner_elastic_2D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcg
 void applyPreConditioner_elastic_3D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl, cudapcgVar_t *res){
     if (flag_PreConditionerWasAssembled){
         kernel_termbytermmul<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(M,v1,m->nvars,res);
-    } else if (flag_assemblyMode == 0){
+        if (v2 != NULL && scl != 0.0)
+          kernel_saxpy_iny<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,v2,scl,m->nvars);
+        return;
+    }
+    if (v2==NULL) v2=v1;
+    if (m->parStrategy_flag == CUDAPCG_NBN){
         // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
         kernel_applyPreConditioner_elastic_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-				#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-					K,
-				#endif
-				v1,v2,scl,m->nvars,m->image,res);
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v1,v2,scl,m->nvars,m->image,res);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+        kernel_applyPreConditioner_elastic_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res);
     }
     return;
 }
 //------------------------------------------------------------------------------
-void Aprod_thermal_2D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t * res, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+void applyPreConditioner_fluid_2D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl, cudapcgVar_t *res){
+
+    //if (v2==NULL) v2=v1;
+
+    if (m->parStrategy_flag != CUDAPCG_NBN) return;
+
+    if (m->poremap_flag == CUDAPCG_POREMAP_IMG){
+
+      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+      kernel_applyPreConditioner_fluid_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,m->nelem,m->pore_map,m->periodic2DOF_map,m->nporenodes,res);
+
+    } else if (m->poremap_flag == CUDAPCG_POREMAP_NUM){
+
+      kernel_applyPreConditioner_fluid_2D_NodeByNode_Pore<<<CEIL(m->nporenodes,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,m->nporenodes,res);
+
+      kernel_applyPreConditioner_fluid_2D_NodeByNode_Border<<<CEIL(m->nbordernodes,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,m->nbordernodes,m->border_pore_map,m->nporenodes,res);
+
+    }
+    return;
+}
+//------------------------------------------------------------------------------
+void applyPreConditioner_fluid_3D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl, cudapcgVar_t *res){
+
+    //if (v2==NULL) v2=v1;
+
+    if (m->parStrategy_flag != CUDAPCG_NBN) return;
+  
+    if (m->poremap_flag == CUDAPCG_POREMAP_IMG){
+
+      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+      kernel_applyPreConditioner_fluid_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,m->nelem,m->pore_map,m->periodic2DOF_map,m->nporenodes,res);
+
+    } else if (m->poremap_flag == CUDAPCG_POREMAP_NUM){
+
+      kernel_applyPreConditioner_fluid_3D_NodeByNode_Pore<<<CEIL(m->nporenodes,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,m->nporenodes,res);
+
+      kernel_applyPreConditioner_fluid_3D_NodeByNode_Border<<<CEIL(m->nbordernodes,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,m->nbordernodes,m->border_pore_map,m->nporenodes,res);
+
+    }
+    return;
+}
+//------------------------------------------------------------------------------
+void Aprod_thermal_2D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
     
-    if (flag_assemblyMode == 0)
+    if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_Aprod_thermal_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-			#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-				K,
-			#endif
-			v,m->nvars,m->image,m->ncols,m->nrows,res,scl,isIncrement);
-    else if (flag_assemblyMode == 1){
-      kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
-      for (unsigned int j=0; j<4; j++)
-        kernel_Aprod_thermal_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-			#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-				K,
-			#endif
-			j,v,m->nelem,m->image,m->nrows,res);
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v,m->nvars,m->image,m->ncols,m->nrows,res,scl,isIncrement);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+      kernel_Aprod_thermal_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v,m->nelem,m->image,m->ncols,m->nrows,res,scl);
     }
-  
+
     return;
 }
 //------------------------------------------------------------------------------
-void Aprod_thermal_3D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t * res, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
-  
-    if (flag_assemblyMode == 0)
+void Aprod_thermal_3D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
+    
+    if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_Aprod_thermal_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-			#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-				K,
-			#endif
-			v,m->nvars,m->image,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
-    else if (flag_assemblyMode == 1){
       #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-        kernel_Aprod_thermal_3D_ElemByElem_n0<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(K,v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n1<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(K,v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n2<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(K,v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n3<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(K,v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n4<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(K,v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n5<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(K,v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n6<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(K,v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n7<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(K,v,m->nelem,m->image,m->ncols,m->nrows,res);
-      #else
-        kernel_Aprod_thermal_3D_ElemByElem_n0<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n1<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n2<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n3<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n4<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n5<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n6<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,m->nelem,m->image,m->ncols,m->nrows,res);
-        kernel_Aprod_thermal_3D_ElemByElem_n7<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,m->nelem,m->image,m->ncols,m->nrows,res);
+        K,
       #endif
-      
-      /*
-      kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
-      for (unsigned int j=0; j<8; j++)
-        kernel_Aprod_thermal_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(j,v,m->nelem,m->image,m->ncols,m->nrows,res);
-      */
+      v,m->nvars,m->image,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+      kernel_Aprod_thermal_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res,scl);
     }
+
     return;
 }
 //------------------------------------------------------------------------------
-void Aprod_elastic_2D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t * res, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
-
-    if (flag_assemblyMode == 0)
+void Aprod_elastic_2D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
+    
+    if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_Aprod_elastic_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-			#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-				K,
-			#endif
-			v,m->nvars,m->image,m->ncols,m->nrows,res,scl,isIncrement);
-    else if (flag_assemblyMode == 1){
-      kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
-      for (unsigned int j=0; j<4; j++)
-        kernel_Aprod_elastic_2D_ElemByElem<<<CEIL(2*m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-			#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-				K,
-			#endif
-			j,v,m->nelem,m->image,m->nrows,res);
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v,m->nvars,m->image,m->ncols,m->nrows,res,scl,isIncrement);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+      kernel_Aprod_elastic_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v,m->nelem,m->image,m->ncols,m->nrows,res,scl);
+    }
+
+    return;
+}
+//------------------------------------------------------------------------------
+void Aprod_elastic_3D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
+    
+    if (m->parStrategy_flag == CUDAPCG_NBN){
+      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+      kernel_Aprod_elastic_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v,m->nvars,m->image,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
+    } else if (m->parStrategy_flag == CUDAPCG_EBE){
+      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+      kernel_Aprod_elastic_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res,scl);
+    }
+      
+    return;
+}
+//------------------------------------------------------------------------------
+void Aprod_fluid_2D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
+
+    if (m->parStrategy_flag != CUDAPCG_NBN) return;
+
+    if (m->poremap_flag == CUDAPCG_POREMAP_IMG){
+
+      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+      kernel_Aprod_fluid_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nelem,m->pore_map,m->periodic2DOF_map,m->nporenodes,m->ncols,m->nrows,res,scl,isIncrement);
+
+    } else if (m->poremap_flag == CUDAPCG_POREMAP_NUM){
+
+      kernel_Aprod_fluid_2D_NodeByNode_Pore<<<CEIL(m->nporenodes,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nporenodes,m->DOF2periodic_map,m->periodic2DOF_map,m->ncols,m->nrows,res,scl,isIncrement);
+
+      kernel_Aprod_fluid_2D_NodeByNode_Border<<<CEIL(m->nbordernodes,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nbordernodes,m->border_pore_map,m->DOF2periodic_map,m->periodic2DOF_map,m->nporenodes,m->ncols,m->nrows,res,scl,isIncrement);
+
+
     }
     return;
 }
 //------------------------------------------------------------------------------
-void Aprod_elastic_3D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t * res, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
-    
-    if (flag_assemblyMode == 0)
+void Aprod_fluid_3D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
+
+    if (m->parStrategy_flag != CUDAPCG_NBN) return;
+
+    if (m->poremap_flag == CUDAPCG_POREMAP_IMG){
+
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-      kernel_Aprod_elastic_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-			#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-				K,
-			#endif
-			v,m->nvars,m->image,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
-    else if (flag_assemblyMode == 1){
-      kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
-      for (unsigned int j=0; j<8; j++)
-        kernel_Aprod_elastic_3D_ElemByElem<<<CEIL(3*m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-			#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-				K,
-			#endif
-			j,v,m->nelem,m->image,m->ncols,m->nrows,res);
+      kernel_Aprod_fluid_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nelem,m->pore_map,m->periodic2DOF_map,m->nporenodes,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
+
+    } else if (m->poremap_flag == CUDAPCG_POREMAP_NUM){
+
+      kernel_Aprod_fluid_3D_NodeByNode_Pore<<<CEIL(m->nporenodes,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nporenodes,m->DOF2periodic_map,m->periodic2DOF_map,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
+
+      kernel_Aprod_fluid_3D_NodeByNode_Border<<<CEIL(m->nbordernodes,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nbordernodes,m->border_pore_map,m->DOF2periodic_map,m->periodic2DOF_map,m->nporenodes,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
+
     }
     return;
 }

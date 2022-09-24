@@ -9,8 +9,8 @@
 #define INCLUDES_CUDAPCG_SOLVERS_STOP_H_INCLUDED
 
 //------------------------------------------------------------------------------
-cudapcgFlag_t isResidualAboveTol(cudapcgVar_t delta, cudapcgVar_t delta_0, cudapcgTol_t num_tol);
-cudapcgVar_t evalResidual(cudapcgVar_t delta, cudapcgVar_t delta_0);
+cudapcgFlag_t isResidualAboveTol(double delta, double delta_0, cudapcgTol_t num_tol);
+double evalResidual(double delta, double delta_0);
 //------------------------------------------------------------------------------
 
 

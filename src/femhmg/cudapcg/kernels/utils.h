@@ -19,6 +19,42 @@
 
 //---------------------------------
 ///////////////////////////////////
+//////// DOUBLE PRECISION /////////
+/////////// ATOMIC ADD ////////////
+///////////////////////////////////
+//---------------------------------
+
+/*
+  CUDA did not implement atomicAdd for double precision IEEE754 floats
+  prior to devices with cc 6.0
+
+  The following conditional macro overloads the atomicAdd function to
+  handle doubles when (__CUDA_ARCH__ < 600).
+
+  Based on these stackoverflow discussions:
+    [https://stackoverflow.com/questions/12626096/why-has-atomicadd-not-been-implemented-for-doubles]
+    [https://stackoverflow.com/questions/37566987/cuda-atomicadd-for-doubles-definition-error]
+
+  The function implemented below was adapted from this CUDA programming guide:
+    [https://developer.download.nvidia.com/compute/DevZone/docs/html/C/doc/CUDA_C_Programming_Guide.pdf]
+    (Page 97)
+*/
+
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 600
+#elif defined(CUDAPCG_VAR_64BIT)
+__device__ double atomicAdd(double *at, double x){
+    unsigned long long int* at_as_ull = (unsigned long long int*)at;
+    unsigned long long int val = *at_as_ull, aux;
+    do {
+        aux = val;
+        val = atomicCAS(at_as_ull, aux,__double_as_longlong(x+__longlong_as_double(aux)));
+    } while (val != aux);
+    return __longlong_as_double(val);
+}
+#endif
+
+//---------------------------------
+///////////////////////////////////
 /////////// AUX MACROS ////////////
 ///////////////////////////////////
 //---------------------------------
@@ -27,13 +63,23 @@
     These macros are used in the Aprod kernels
     to navigate the structured grid, considering
     the adopted DOF numbering system (ANDREASEN).
+    
+    Obs.: WALK_RIGHT and WALK_LEFT work with local
+          indexes within a layer (3D).
 */
-#define WALK_UP(from, n_y) (from-1+n_y*(!(from%n_y)))
-#define WALK_DOWN(from, n_y) (from+1-n_y*(!((from+1)%n_y)))
-#define WALK_RIGHT(from, n_y, total) ((from+n_y)%total)
-#define WALK_LEFT(from, n_x, n_y, total) ((from+(n_x-1)*n_y)%total)
-#define WALK_FAR(from, n_xy, total) ((from+n_xy)%total)
-#define WALK_NEAR(from, n_xy, n_z, total) ((from+(n_z-1)*n_xy)%total)
+#define WALK_UP(id, nrows) (id-1+nrows*(!(id%nrows)))
+#define WALK_DOWN(id, nrows) (id+1-nrows*(!((id+1)%nrows)))
+#define WALK_RIGHT(id, nrows, nrowscols) ((id+nrows)%nrowscols)
+#define WALK_LEFT(id, nrows, nrowscols) ((id+(nrowscols-nrows))%nrowscols)
+#define WALK_FAR(id, nrowscols, nrowscolslayers) ((id+nrowscols)%nrowscolslayers)
+#define WALK_NEAR(id, nrowscols, nrowscolslayers) ((id+(nrowscolslayers-nrowscols))%nrowscolslayers)
+
+/*
+    These macros reproduce the adopted DOF numbering
+    system (ANDREASEN), from [row,col,layer] indexes.
+*/
+#define PERIODICNUM_2D(row,col,nrows,ncols) ((row+nrows)%nrows+((col+ncols)%ncols)*nrows)
+#define PERIODICNUM_3D(row,col,layer,nrows,ncols,nlayers) ((row+nrows)%nrows+((col+ncols)%ncols)*nrows+((layer+nlayers)%nlayers)*nrows*ncols)
 
 
 #endif // CUDAPCG_KERNELS_UTILS_H_INCLUDED

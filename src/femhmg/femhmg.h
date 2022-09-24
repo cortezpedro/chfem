@@ -1,22 +1,27 @@
 /*
-	Universidade Federal Fluminense (UFF) - Niteroi, Brazil
-	Institute of Computing
-	Authors: Cortez, P., Vianna, R., Sapucaia, V., Pereira., A.
-	History: 
-		* v1.0 (jul/2020) [ALL]    -> OpenMp, parallelization of CPU code
-		* v1.1 (nov/2020) [CORTEZ] -> CUDA, PCG on GPU. (substituted parpcg.h with cudapcg.h)
+	=====================================================================
+  Universidade Federal Fluminense (UFF) - Niteroi, Brazil
+  Institute of Computing
+  Authors: Cortez Lopes, P., Vianna, R., Sapucaia, V., Pereira., A.
+  contact: pedrocortez@id.uff.br
 
-	API for the handling of FEM models used in
-    material homogenization.
-    Makes use of cudapcg.h to solve linear system
-    of equations.
+  Image-based Computational Homogenization with the FEM in GPU.
+             (C)           (H)                     (FEM)  (GPU)
+  [chfem_gpu]
+  
+  History:
+    * v0.0 (jul/2020) [ALL]    -> OpenMp, parallelization of CPU code
+    * v1.0 (nov/2020) [CORTEZ] -> CUDA, PCG in GPU
+    * v1.1 (sep/2022) [CORTEZ] -> Added permeability, MINRES.
+                                  atomicAdd for EBE.
+                                  refactoring of kernels for readability.
 
-    ATTENTION.1:
-        Considers a structured regular mesh of quad elements (2D)
-        or hexahedron elements (3D).
+  API for the handling of FEM models used in material homogenization.
+  Makes use of cudapcg.h to solve linear systems of equations.
+  
+  THERMAL CONDUCTIVITY, LINEAR ELASTICITY, ABSOLUTE PERMEABILITY.
 
-    ATTENTION.2:
-        As it is, works for Potential or Elasticity, both 2D or 3D.
+  =====================================================================
 */
 
 #include "includes.h"
@@ -28,14 +33,23 @@ logical hmgInit(char * data_filename, char * elem_filename);
 logical hmgEnd();
 
 void hmgSetParallelStrategyFlag(cudapcgFlag_t flag);
+void hmgSetSolverFlag(cudapcgFlag_t flag);
+void hmgSetStoppingCriteria(cudapcgFlag_t flag);
+logical hmgSetPoreMappingStrategy(cudapcgFlag_t flag);
+
+void hmgFindInitialGuesses(unsigned int nlevels);
+void hmgExportX(logical flag);
+void hmgImportX(char *file);
 
 void hmgSetHomogenizationFlag(hmgFlag_t flag);
-void hmgFindInitialGuesses(unsigned int nlevels);
 void hmgSolveHomogenization();
 
 void hmgPrintModelData();
+var *hmgGetConstitutiveMtx();
 void hmgPrintConstitutiveMtx();
 logical hmgSaveConstitutiveMtx(const char * filename);
+
+void hmgSaveFields(logical mustExport_flag, logical byElems_flag);
 
 void hmgKeepTrackOfAnalysisReport(reportFlag_t flag);
 reportFlag_t hmgPrintReport(const char *filename);

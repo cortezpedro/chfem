@@ -10,28 +10,31 @@
 
 typedef struct _pcgsolver{
 
+    unsigned long int count; // counts calls to solver->solve()
+
     char *header_str;
 
     cudapcgModel_t *model;
-    
+
     // gpu arrays
     cudapcgVar_t *x;
     cudapcgVar_t *r;
     cudapcgVar_t *d;
     cudapcgVar_t *q;
+    cudapcgVar_t *s; // used in minres
 
-    // cpu array (used in RD and SD solvers)
-    cudapcgVar_t *h_d;
-    
     cudapcgFlag_t userAllocatedArrays_flag;
     cudapcgFlag_t x0_hasBeenSet_flag;
-    
+
     unsigned int analysis_flag;
     unsigned int parallelStrategy_flag;
-    
+    unsigned int solver_flag;
+
+    cudapcgFlag_t resnorm_flag;
+
     cudapcgTol_t num_tol;
     unsigned int max_iterations;
-    
+
     cudapcgVar_t residual;
     unsigned int iteration;
     double total_time;
@@ -41,8 +44,8 @@ typedef struct _pcgsolver{
     cudapcgFlag_t mustAssemblePreConditioner;
     void (*assemblePreConditioner)(cudapcgModel_t *);
     void (*applyPreConditioner)(cudapcgModel_t * , cudapcgVar_t *, cudapcgVar_t *, cudapcgVar_t, cudapcgVar_t *);
-    void (*Aprod)(cudapcgModel_t * , cudapcgVar_t *, cudapcgVar_t *, cudapcgVar_t, cudapcgFlag_t);
-    
+    void (*Aprod)(cudapcgModel_t * , cudapcgVar_t *, cudapcgVar_t, cudapcgFlag_t , cudapcgVar_t *);
+
     cudapcgFlag_t (*solve)(struct _pcgsolver *, cudapcgVar_t *);
     cudapcgFlag_t (*setX0)(struct _pcgsolver *, cudapcgVar_t *, cudapcgFlag_t);
     cudapcgFlag_t (*allocDeviceArrays)(struct _pcgsolver *);

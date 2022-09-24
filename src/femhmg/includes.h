@@ -1,17 +1,3 @@
-/*
-    Universidade Federal Fluminense (UFF) - Niteroi, Brazil
-    Institute of Computing
-    Authors: Cortez, P., Vianna, R.
-    History: 
-		* v1.0 (jul/2020) [ALL]    -> OpenMp, parallelization of CPU code
-		* v1.1 (nov/2020) [CORTEZ] -> CUDA, PCG on GPU
-
-    Includes header for FEM homogenization of physical properties from micro-CT
-    images, in binary grayscale representation.
-
-    Meant for "femhmg" and "cudapcg".
-*/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,12 +20,17 @@
 
 #define HMG_THERMAL 0
 #define HMG_ELASTIC 1
+#define HMG_FLUID 2
 
 #define HMG_2D 2
 #define HMG_3D 3
 
 #define HMG_TRUE 1
 #define HMG_FALSE 0
+
+#define HMG_DIR_X 0
+#define HMG_DIR_Y 1
+#define HMG_DIR_Z 2
 
 #define HOMOGENIZE_X 0
 #define HOMOGENIZE_Y 1
@@ -55,11 +46,19 @@ typedef unsigned short int hmgFlag_t;
 
 typedef struct _hmgmodel{
 
+
     char *neutralFile;
+    char *neutralFile_noExt;
     char *imageFile;
 
     report_t *report;
     reportFlag_t m_report_flag;
+
+    logical m_exportX_flag;
+    char *x0File;
+
+    logical m_saveFields_flag;
+    logical m_fieldsByElem_flag; 
 
     hmgFlag_t m_dim_flag;
     hmgFlag_t m_analysis_flag;
@@ -67,6 +66,8 @@ typedef struct _hmgmodel{
     cudapcgFlag_t m_pcg_flag;
     logical m_hmg_flag_was_set;
     logical m_using_x0_flag;
+
+    cudapcgFlag_t poremap_flag;
 
     var m_elem_size;
     unsigned int m_mesh_refinement;
@@ -81,11 +82,15 @@ typedef struct _hmgmodel{
     unsigned int * node_dof_map;
     cudapcgMap_t * elem_material_map;
     cudapcgMap_t * dof_material_map;
+    cudapcgIdMap_t  * dof_id_map; // used for permeability analysis
+    cudapcgFlag_t * dof_fluid_map; // used for permeability analysis
     cudapcgVar_t * Mtxs;
     cudapcgVar_t * CB;
     cudapcgVar_t * RHS;
     cudapcgVar_t ** x0;
     var * C;
+    cudapcgFlag_t * pore_border_fluidkeys;
+    cudapcgIdMap_t * pore_dof2node_map;
 
     unsigned int m_nx;
     unsigned int m_ny;
@@ -95,19 +100,24 @@ typedef struct _hmgmodel{
     unsigned int m_nelem;
     unsigned int m_nelemdof;
     unsigned int m_ndof;
+    unsigned int m_nVelocityNodes; // used for permeability analysis
+    unsigned int m_nBorderNodes;
     
     unsigned char m_nmat; // keys are 8bit
 
     cudapcgTol_t m_num_tol;
     unsigned int m_max_iterations;
-    
+
     logical (*initModel)(struct _hmgmodel *);
     void (*assembleLocalMtxs)(struct _hmgmodel *);
     void (*assembleNodeDofMap)(struct _hmgmodel *);
+    void (*assembleDofIdMap)(struct _hmgmodel *);
     void (*assembleDofMaterialMap)(struct _hmgmodel *);
     void (*assembleRHS)(struct _hmgmodel *);
     void (*updateC)(struct _hmgmodel *, cudapcgVar_t *);
     void (*printC)(struct _hmgmodel *, char *);
+    
+    void (*saveFields)(struct _hmgmodel *, cudapcgVar_t *);
 
 } hmgModel_t;
 
