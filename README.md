@@ -95,11 +95,34 @@ A binary representation of a raster image, with an 8-bit (uint8, 0-255) grayscal
 
 Obs.: The provided image's voxels must be numbered from <u>left to right</u>, then from <u>top to bottom</u>, then from <u>near to far</u>.
 
+## Memory
+
+| Analysis | Voxels  | DOFs \[$\times 10^6$\]    | CPU RAM \[GB\] | GPU RAM \[GB\] |
+|  :---:   | :---:   |        ---:               |     :---:      |     :---:      |
+| THERMAL  | 400$^3$ |       64                  |      1.5       | <32BIT> 1.1, <64BIT> 2.2 | 
+| ELASTIC  | 400$^3$ |      192                  |      4.0       | <32BIT> 3.2, <64BIT> 6.3 |
+|  FLUID   | 400$^3$ | $\approx 4\phi\times$ 64  |      X.X       | <32BIT> 1.5, <64BIT> 2.8 |
+
+Obs.: These are memory <u>estimates</u>, for the sake of reference.
+Obs.2: Porosity $\phi=0.3\%$ admitted for the FLUID analysis shown above.
+
+## Requirements
+
++ An NVIDIA GPU with compute capability $\geq$ 5.0. (_Might work with older hardware, provided that its appropriate architecture flags are passed to the compiler_)
++ NVIDIA Graphics Driver
++ [nvcc](https://developer.nvidia.com/cuda-toolkit)
+
+Obs.: Note that `nvcc` might not work out-of-the-box in Windows. A common issue when running our "compiler script" in Windows is:
+```bash
+nvcc fatal : Cannot find compiler 'cl.exe' in PATH
+```
+To solve this, we suggest installing [Microsoft Visual Studio Community](https://visualstudio.microsoft.com/vs/community/) with its C/C++ dependencies, then either adding `cl.exe`'s directory to your `PATH` or passing it to the compiler with the `-ccbin` flag. Alternatively, you may compile and run in MSVC.
+
 ## Usage
 
 ### Compile
 
-A python script was implemented to handle compilation with nvcc. Any specific additional flag can be passed as input. For more info, run the script with a "-h" flag. 
+A python script was implemented to handle compilation with nvcc. Any specific additional flag can be passed as input. For more info, run the script with the `-h` flag. 
 
 ```bash
 ~[root]$ cd compile
@@ -188,4 +211,4 @@ Optional parameters:
 ~[root]/test$ ./test
 ```
 
-Obs.: \<options\> similar to `compile\_chfem\_gpu.py`'s \<options\>.
+Obs.: \<options\> similar to `compile_chfem_gpu.py`'s \<options\>.
