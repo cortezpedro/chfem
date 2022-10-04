@@ -105,7 +105,7 @@ Obs.: The provided image's voxels must be numbered from <u>left to right</u>, th
 
 Obs.: These are memory **estimates**, for the sake of reference.
 
-Obs.2: Porosity $\phi=0.25$\% admitted for the FLUID analysis shown above.
+Obs.2: Porosity $\phi=0.25$ admitted for the FLUID analysis shown above.
 
 ## Requirements
 
