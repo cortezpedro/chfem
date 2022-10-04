@@ -1,32 +1,103 @@
-# CHFEMGPU
+[![license](https://img.shields.io/badge/license-MIT-green.svg?style=flat)](https://gitlab.com/cortezpedro/chfemgpu/-/blob/master/LICENSE)
 
-[license-image]: https://img.shields.io/badge/license-MIT-green.svg?style=flat
-[license]: https://gitlab.com/cortezpedro/chfemgpu/-/blob/master/LICENSE
+# Computational Homogenization with the image-based Finite Element Method in GPU (chfem\_gpu)
+
+Developed at the _Laboratório de Computação Científica, Universidade Federal Fluminense_ (`LCC-UFF`). Niterói, Brazil.
+
+Currently at version v1.1.0
+
+Part of a toolkit for image-based numerical homogenization. The following programs are also recommended:
++ [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer), a GUI-based tool for viewing $\mu$CT data depicted by stacks of TIFF files and generating `.nf` and `.raw` files that can serve as input for `chfem_gpu`.
++ [chpack](https://gitlab.com/lcc-uff/chpack), a bundle of Julia programs that employ similar matrix-free approaches in CPU, with script-like syntax.
 
 ## Introduction
 
 `chfem_gpu` is a software written in C and CUDA C for the computational homogenization of material samples characterized via $\mu$CT. As it is, the effective properties that can be evaluated are:
 
-+ Thermal conductivity
-+ Linear elasticity
-+ Permeability
++ Thermal conductivity $\rightarrow$ $\kappa\nabla^{2}u=0$
++ Linear elasticity $\rightarrow$ $\nabla\cdot\mathbf{C}\nabla\mathbf{u}=0$
++ Permeability $\rightarrow$ $-\mu\nabla^{2}\mathbf{u}+\nabla p = \mathbf{b}$ ; $\nabla\cdot\mathbf{u} -\tau p=0$
 
-The program follows a matrix-free approach to image-based finite element analysis, exploring GPU resources with CUDA to achieve significant performance gains.
+The program follows a lightweight matrix-free approach to image-based finite element analysis, exploring GPU resources with CUDA to achieve significant performance gains.
+
+As input, `chfem_gpu` expects a neutral file (`.nf`) [like this](https://gitlab.com/cortezpedro/chfem_gpu/-/blob/master/test/input/2D/thermal/100x100.nf) that contains textual descriptive info regarding analysis parameters, and a RAW file (`.raw`) containing an 8bit (0-255) grayscale value for each voxel (a raster grayscale image).
+
+### Motto
+
+`_Can we **not** allocate this?_`
 
 Memory efficiency is the north of this project. Our end goal is to be able to run large problems ($10^9$ DOFs) with relatively acessible graphics cards.
 
-## Matrix-free strategies
+### Matrix-free strategies
 
 + Node-by-node
 + Element-by-element
 
-## Considerations
+### Considerations
 
 + Periodic boundary conditions
 + Linear shape functions for finite elements
 + Numerical stabilization for stokes flow
 
-## Compile
+## Input
+
+### Neutral file
+
+A textual file that sets analyses parameters and provides information about the model. Template `.nf`'s can be generated with [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer). The file must contain the following parameters (in this order):
+
+```
+%type_of_analysis
+0
+<uint8>
+[0=THERMAL,1=ELASTIC,2=FLUID]
+
+%voxel_size
+1.0
+<double>
+[must be greater than 0.0]
+
+%solver_tolerance
+1e-06
+<double>
+[must be greater than 0.0]
+
+%number_of_iterations
+1000
+<uint32>
+
+%image_dimensions
+100 100 0
+<uint32> <uint32> <uint32>
+[nx=COLS,ny=ROWS,nz=LAYERS]
+[OBS.: nz=0 --> 2D]
+
+%refinement
+1
+<uint32>
+
+%number_of_materials
+2
+<uint8>
+
+%properties_of_materials
+0 1.0
+255 10.0
+<uint8> (<double>...)
+[THERMAL: color, conductivity]                        [Example: 0 1.0]
+[ELASTICITY: color, Young's modulus, Poisson's ratio] [Example: 0 1.0 0.3]
+[FLUID: color (first one represents the pores)]       [Example: 0]
+
+```
+
+### Raw file
+
+A binary representation of a raster image, with an 8-bit (uint8, 0-255) grayscale value per voxel. Each unique color value is taken as a material phase identifier in the given microstructure. In essence, the image is represented by an array, which can be generated from TIFF files with the [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer) application, or even it can be straightforwardly created with NumPy, for example.
+
+Obs.: The provided image's voxels must be numbered from <u>left to right</u>, then from <u>top to bottom</u>, then from <u>near to far</u>.
+
+## Usage
+
+### Compile
 
 A python script was implemented to handle compilation with nvcc. Any specific additional flag can be passed as input. For more info, run the script with a "-h" flag. 
 
@@ -34,8 +105,50 @@ A python script was implemented to handle compilation with nvcc. Any specific ad
 ~[root]$ cd compile
 ~[root]/compile$ python3 compile_chfem_gpu.py <options>
 ```
+Some optional compiler flags:
 
-## Run
++ Quiet iterations
+
+\[DEFAULT=Not defined\] If defined, disables dynamic report of solver convergence.
+
+```bash
+-DCUDAPCG_QUIET_ITERATIONS
+```
+
++ Floating point precision in the GPU
+
+\[DEFAULT=CUDAPCG\_VAR\_64BIT\] Variable size for the GPU arrays.
+
+```bash
+-DCUDAPCG_VAR_32BIT
+-DCUDAPCG_VAR_64BIT
+```
+
++ Material key size
+
+\[DEFAULT=CUDAPCG\_MATKEY\_16BIT\] Size of material keys. _Tip: if only interested in permeability, use 8BIT keys_.
+
+```bash
+-DCUDAPCG_MATKEY_8BIT
+-DCUDAPCG_MATKEY_16BIT
+-DCUDAPCG_MATKEY_32BIT
+-DCUDAPCG_MATKEY_64BIT
+```
+
++ Threads per block
+
+\[DEFAULT=CUDAPCG\_BLOCKDIM\_512\] Number of threads per block for CUDA kernels. _Tip: Your hardware might benefit from lower block dimensions_.
+
+```bash
+-DCUDAPCG_BLOCKDIM_32
+-DCUDAPCG_BLOCKDIM_64
+-DCUDAPCG_BLOCKDIM_128
+-DCUDAPCG_BLOCKDIM_256
+-DCUDAPCG_BLOCKDIM_512
+-DCUDAPCG_BLOCKDIM_1024
+```
+
+### Run
 
 + Linux
 
@@ -43,16 +156,36 @@ A python script was implemented to handle compilation with nvcc. Any specific ad
 ~[root]$ ./chfem_gpu [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
 ```
 
-+ Windows
++ Windows (cmd)
 
 ```bash
 ~[root]$ chfem_gpu.exe [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
 ```
 
-## Test
+Optional parameters:
+
+```bash
+-b: Save results in a binary file. Must be followed by a string with a filename.
+-c: Stopping criteria for the PCG method: 0 - L2 (default), 1 - Inf, 2 - L2+Error.
+-d: Target direction: 0 - X, 1 - Y, 2 - Z, 3 - YZ, 4 - XZ, 5 - XY, 6 - ALL (default).
+-e: Export fields from simulation (by nodes).
+-h: Print this help info and exit.
+-i: Input files. Must be followed by: [.nf] [.raw].
+-m: Write metrics report. Must be followed by a string with a filename.
+-p: Parallel matrix-free strategy: 0 - NBN (default), 1 - EBE.
+-pm: Pore mapping strategy: 0 - image, 1 - DOF number (default).
+-r: Number of recursive searches for initial guesses.
+-s: Solver: 0 - PCG (default), 1 - CG, 2 - MINRES.
+-xi: Import initial guesses for PCG solver from binary files. Must be followed by a string with a filename.
+-xo: Export result vector (x) from the PCG solver.
+```
+
+### Test
 
 ```bash
 ~[root]$ cd test
 ~[root]/test$ python3 compile_test.py <options>
 ~[root]/test$ ./test
 ```
+
+Obs.: \<options\> similar to `compile\_chfem\_gpu.py`'s \<options\>.
