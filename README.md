@@ -24,7 +24,7 @@ As input, `chfem_gpu` expects a neutral file (`.nf`) [like this](https://gitlab.
 
 ### Motto
 
-`_Can we **not** allocate this?_`
+"_Can we not allocate this?_"
 
 Memory efficiency is the north of this project. Our end goal is to be able to run large problems ($10^9$ DOFs) with relatively acessible graphics cards.
 
@@ -97,14 +97,15 @@ Obs.: The provided image's voxels must be numbered from <u>left to right</u>, th
 
 ## Memory
 
-| Analysis | Voxels  | DOFs \[$\times 10^6$\]    | CPU RAM \[GB\] | GPU RAM \[GB\] |
-|  :---:   | :---:   |        ---:               |     :---:      |     :---:      |
+| Analysis | Voxels  | DOFs \[$\times 10^6$\]    | CPU RAM \[GB\] | GPU RAM \[GB\]           |
+|  :---:   | :---:   |        ---:               |     :---:      |     :---:                |
 | THERMAL  | 400$^3$ |       64                  |      1.5       | <32BIT> 1.1, <64BIT> 2.2 | 
 | ELASTIC  | 400$^3$ |      192                  |      4.0       | <32BIT> 3.2, <64BIT> 6.3 |
-|  FLUID   | 400$^3$ | $\approx 4\phi\times$ 64  |      X.X       | <32BIT> 1.5, <64BIT> 2.8 |
+|  FLUID   | 400$^3$ | $\approx 4\phi\times$ 64  |      1.3       | <32BIT> 1.3, <64BIT> 2.1 |
 
-Obs.: These are memory <u>estimates</u>, for the sake of reference.
-Obs.2: Porosity $\phi=0.3\%$ admitted for the FLUID analysis shown above.
+Obs.: These are memory **estimates**, for the sake of reference.
+
+Obs.2: Porosity $\phi=0.25$\% admitted for the FLUID analysis shown above.
 
 ## Requirements
 
@@ -122,7 +123,7 @@ To solve this, we suggest installing [Microsoft Visual Studio Community](https:/
 
 ### Compile
 
-A python script was implemented to handle compilation with nvcc. Any specific additional flag can be passed as input. For more info, run the script with the `-h` flag. 
+A python script was implemented to handle compilation with `nvcc`. Any specific additional flag can be passed as input. For more info, run the script with the `-h` flag. 
 
 ```bash
 ~[root]$ cd compile
@@ -187,7 +188,7 @@ Some optional compiler flags:
 
 Optional parameters:
 
-```bash
+```
 -b: Save results in a binary file. Must be followed by a string with a filename.
 -c: Stopping criteria for the PCG method: 0 - L2 (default), 1 - Inf, 2 - L2+Error.
 -d: Target direction: 0 - X, 1 - Y, 2 - Z, 3 - YZ, 4 - XZ, 5 - XY, 6 - ALL (default).
