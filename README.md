@@ -39,7 +39,7 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 + Linear shape functions for finite elements
 + Numerical stabilization for stokes flow
 
-### Publications
+## Publications
 
 + Toolkit for image-based numerical homogenization (alongside [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer) and [chpack](https://gitlab.com/lcc-uff/Chpack.jl)).
 [link to paper](https://www.sciencedirect.com/science/article/pii/S0927025623000150)  
