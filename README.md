@@ -8,7 +8,7 @@ Currently at version v1.1.0
 
 Part of a toolkit for image-based numerical homogenization. The following programs are also recommended:
 + [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer), a GUI-based tool for viewing $\mu$CT data depicted by stacks of TIFF files and generating `.nf` and `.raw` files that can serve as input for `chfem_gpu`.
-+ [chpack](https://gitlab.com/lcc-uff/chpack), a bundle of Julia programs that employ similar matrix-free approaches in CPU, with script-like syntax.
++ [chpack](https://gitlab.com/lcc-uff/Chpack.jl), a bundle of Julia programs that employ similar matrix-free approaches in CPU, with script-like syntax.
 
 ## Introduction
 
@@ -38,6 +38,37 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 + Periodic boundary conditions
 + Linear shape functions for finite elements
 + Numerical stabilization for stokes flow
+
+### Publications
+
++ Toolkit for image-based numerical homogenization (alongside [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer) and [chpack](https://gitlab.com/lcc-uff/Chpack.jl)).
+[link to paper](https://www.sciencedirect.com/science/article/pii/S0927025623000150)
+**Obs.:** If you use `chfem_gpu` in your academic work, it is kindly requested that you cite this reference.
+```Bibtex
+@article{toolkit2023,
+    title = {Simulation toolkit for digital material characterization of large image-based microstructures},
+    author = {Pedro C.F. Lopes and Rafael S. Vianna and Victor W. Sapucaia and Federico Semeraro and Ricardo Leiderman and André M.B. Pereira},
+    journal = {Computational Materials Science},
+    volume = {219},
+    pages = {112021},
+    year = {2023},
+    publisher={Elsevier}
+}
+```
+
++ Matrix-free PCG solvers in GPU for image-based FEM problems in periodic media.
+[link to paper](https://www.sciencedirect.com/science/article/pii/S0045782522003978)
+```Bibtex
+@article{lopes2022,
+    title = {A GPU implementation of the PCG method for large-scale image-based finite element analysis in heterogeneous periodic media},
+    author = {Pedro C.F. Lopes and André M.B. Pereira and Esteban Clua and Ricardo Leiderman},
+    journal = {Computer Methods in Applied Mechanics and Engineering},
+    volume = {399},
+    pages = {115276},
+    year = {2022},
+    publisher={Elsevier}
+}
+```
 
 ## Input
 
