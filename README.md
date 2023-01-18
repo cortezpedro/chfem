@@ -42,7 +42,7 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 ### Publications
 
 + Toolkit for image-based numerical homogenization (alongside [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer) and [chpack](https://gitlab.com/lcc-uff/Chpack.jl)).
-[link to paper](https://www.sciencedirect.com/science/article/pii/S0927025623000150)
+[link to paper](https://www.sciencedirect.com/science/article/pii/S0927025623000150)  
 **Obs.:** If you use `chfem_gpu` in your academic work, it is kindly requested that you cite this reference.
 ```Bibtex
 @article{toolkit2023,
@@ -56,7 +56,7 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 }
 ```
 
-+ Matrix-free PCG solvers in GPU for image-based FEM problems in periodic media.
++ Matrix-free PCG solver in GPU for image-based FEM problems in periodic media.
 [link to paper](https://www.sciencedirect.com/science/article/pii/S0045782522003978)
 ```Bibtex
 @article{lopes2022,
