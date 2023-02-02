@@ -4,7 +4,7 @@
 
 Developed at the _Laboratório de Computação Científica, Universidade Federal Fluminense_ (`LCC-UFF`). Niterói, Brazil.
 
-Currently at version v1.1.0
+Currently at version v1.1.1
 
 Part of a toolkit for image-based numerical homogenization. The following programs are also recommended:
 + [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer), a GUI-based tool for viewing $\mu$CT data depicted by stacks of TIFF files and generating `.nf` and `.raw` files that can serve as input for `chfem_gpu`.
@@ -42,7 +42,7 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 ## Publications
 
 + Toolkit for image-based numerical homogenization (alongside [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer) and [chpack](https://gitlab.com/lcc-uff/Chpack.jl)).
-[link to paper](https://doi.org/10.1016/j.commatsci.2023.112021)  
+[link to paper](https://doi.org/10.1016/j.commatsci.2023.112021)
 **Obs.:** If you use `chfem_gpu` in your academic work, it is kindly requested that you cite this reference.
 ```Bibtex
 @article{toolkit2023,
@@ -118,6 +118,10 @@ A textual file that sets analyses parameters and provides information about the 
 [ELASTICITY: color, Young's modulus, Poisson's ratio] [Example: 0 1.0 0.3]
 [FLUID: color (first one represents the pores)]       [Example: 0]
 
+%data_type
+float32
+[single or double precison for the optional scalar density field input]
+[float32 or float64]
 ```
 
 ### Raw file
@@ -192,7 +196,7 @@ Some optional compiler flags:
 
 + Threads per block
 
-\[DEFAULT=CUDAPCG\_BLOCKDIM\_512\] Number of threads per block for CUDA kernels. _Tip: Your hardware might benefit from lower block dimensions_.
+\[DEFAULT=CUDAPCG\_BLOCKDIM\_128\] Number of threads per block for CUDA kernels. _Tip: Your hardware might benefit from lower block dimensions_.
 
 ```bash
 -DCUDAPCG_BLOCKDIM_32
@@ -224,6 +228,7 @@ Optional parameters:
 -c: Stopping criteria for the PCG method: 0 - L2 (default), 1 - Inf, 2 - L2+Error.
 -d: Target direction: 0 - X, 1 - Y, 2 - Z, 3 - YZ, 4 - XZ, 5 - XY, 6 - ALL (default).
 -e: Export fields from simulation (by nodes).
+-f: Input scalar density field. Must be followed by a [.bin] file.
 -h: Print this help info and exit.
 -i: Input files. Must be followed by: [.nf] [.raw].
 -m: Write metrics report. Must be followed by a string with a filename.
