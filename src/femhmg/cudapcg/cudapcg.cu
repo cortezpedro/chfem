@@ -72,6 +72,7 @@ cudapcgFlag_t (*setModelStruct)(cudapcgModel_t **, const void *) = setModelStruc
 void freeModelStruct(cudapcgModel_t *model){
     if (solver->model->name !=NULL)            {free(solver->model->name); solver->model->name = NULL;}
     if (solver->model->image!=NULL)            {HANDLE_ERROR(cudaFree(solver->model->image));            solver->model->image=NULL;}
+    if (solver->model->parametric_density_field!=NULL){HANDLE_ERROR(cudaFree(solver->model->parametric_density_field)); solver->model->parametric_density_field=NULL;}
     if (solver->model->pore_map!=NULL)         {HANDLE_ERROR(cudaFree(solver->model->pore_map));         solver->model->pore_map=NULL;}
     if (solver->model->border_pore_map!=NULL)  {HANDLE_ERROR(cudaFree(solver->model->border_pore_map));  solver->model->border_pore_map=NULL;}    
     if (solver->model->periodic2DOF_map!=NULL) {HANDLE_ERROR(cudaFree(solver->model->periodic2DOF_map)); solver->model->periodic2DOF_map=NULL;}
@@ -205,6 +206,7 @@ cudapcgModel_t * cudapcgNewModel(void){
   new_model->freeAllowed_flag = CUDAPCG_TRUE;
   new_model->parStrategy_flag = CUDAPCG_NBN;
   new_model->poremap_flag     = CUDAPCG_POREMAP_NUM;
+  new_model->parametric_density_field_flag = CUDAPCG_FALSE;
   new_model->nrows = 0;
   new_model->ncols = 0;
   new_model->nlayers = 0;
@@ -215,6 +217,9 @@ cudapcgModel_t * cudapcgNewModel(void){
   new_model->nporenodes = 0;
   new_model->nbordernodes = 0;
   new_model->image = NULL;
+  new_model->parametric_density_field = NULL;
+  new_model->limits_density_field[0]=0.0;
+  new_model->limits_density_field[1]=0.0;
   new_model->pore_map = NULL;
   new_model->border_pore_map = NULL;
   new_model->periodic2DOF_map = NULL;
@@ -254,8 +259,15 @@ cudapcgFlag_t cudapcgBuildModel(const void *data){
   if (solver->r!=NULL) HANDLE_ERROR(cudaFree(solver->r)); solver->r=NULL;
   HANDLE_ERROR(cudaMalloc(&(solver->r),var_sz));
   if (solver->analysis_flag < CUDAPCG_FLUID_2D){
-    if (solver->model->image==NULL)
-      HANDLE_ERROR(cudaMalloc(&(solver->model->image),sizeof(cudapcgMap_t)*solver->model->nelem));
+    if (solver->model->parametric_density_field_flag == CUDAPCG_FALSE){
+      if (solver->model->image==NULL)
+        HANDLE_ERROR(cudaMalloc(&(solver->model->image),sizeof(cudapcgMap_t)*solver->model->nelem));
+    } else {
+      if (solver->analysis_flag >= CUDAPCG_ELASTIC_2D){ // not required for thermal analysis
+        HANDLE_ERROR(cudaMalloc(&(solver->model->image),sizeof(cudapcgMap_t)*solver->model->nelem));
+      }
+      HANDLE_ERROR(cudaMalloc(&(solver->model->parametric_density_field),sizeof(parametricScalarField_t)*solver->model->nelem));
+    }
   } else {
     if (solver->model->periodic2DOF_map==NULL)
       HANDLE_ERROR(cudaMalloc(&(solver->model->periodic2DOF_map),sizeof(cudapcgIdMap_t)*solver->model->nelem));
@@ -306,6 +318,15 @@ cudapcgFlag_t cudapcgSetImage(cudapcgMap_t *img){
         return CUDAPCG_FALSE;
     // Obs.: Arr size always works with solver->model->nelem because it is numerically equivalent to (valid_nodes/dof_per_node)
     HANDLE_ERROR(cudaMemcpy(solver->model->image,img,solver->model->nelem*sizeof(cudapcgMap_t),cudaMemcpyHostToDevice));
+    return CUDAPCG_TRUE;
+}
+//------------------------------------------------------------------------------
+cudapcgFlag_t cudapcgSetParametricDensityField(parametricScalarField_t *field, double fmin, double fmax){
+    if (!isModelValid(solver))
+        return CUDAPCG_FALSE;
+    HANDLE_ERROR(cudaMemcpy(solver->model->parametric_density_field,field,solver->model->nelem*sizeof(parametricScalarField_t),cudaMemcpyHostToDevice));
+    solver->model->limits_density_field[0] = fmin;
+    solver->model->limits_density_field[1] = fmax;
     return CUDAPCG_TRUE;
 }
 //------------------------------------------------------------------------------

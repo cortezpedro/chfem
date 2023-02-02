@@ -46,7 +46,7 @@ char report_buffer[1024]; // 1 KB (should always be enough)
 double time_total;
 
 // These are auxiliary. Might organize in a struct later.
-unsigned int assemblyfree_strategy_flag=CUDAPCG_NBN, solver_flag=CUDAPCG_DEFAULT_SOLVER, default_poremap_flag = CUDAPCG_POREMAP_NUM;
+unsigned int assemblyfree_strategy_flag=CUDAPCG_NBN, solver_flag=CUDAPCG_DEFAULT_SOLVER, default_poremap_flag=CUDAPCG_POREMAP_NUM;
 logical stopCrit_flag=CUDAPCG_L2_NORM;
 
 //---------------------------------
@@ -61,6 +61,7 @@ logical readData(char * filename);
 logical readMaterialMap(char * filename);
 logical readMaterialMapNF(char * filename);
 logical readMaterialMapRAW(char * filename);
+logical readScalarDensityFieldMap(char * filename);
 logical setAnalysisType();
 void free_model_arrs(hmgModel_t * model);
 void assemble_coarse_copy(hmgModel_t * coarse_model, hmgModel_t * original_model);
@@ -87,6 +88,7 @@ cudapcgFlag_t cudapcgModel_constructor(cudapcgModel_t **ptr, const void *data){
 
   (*ptr)->parStrategy_flag = assemblyfree_strategy_flag;
   (*ptr)->poremap_flag = model->poremap_flag;
+  (*ptr)->parametric_density_field_flag = ( model->sdfFile == NULL || model->m_analysis_flag == HMG_FLUID ) ? CUDAPCG_FALSE : CUDAPCG_TRUE;
 
   (*ptr)->nrows = model->m_ny-1;
   (*ptr)->ncols = model->m_nx-1;
@@ -95,7 +97,7 @@ cudapcgFlag_t cudapcgModel_constructor(cudapcgModel_t **ptr, const void *data){
   (*ptr)->nelem = model->m_nelem;
   (*ptr)->nvars = model->m_ndof;
 
-  (*ptr)->nkeys = model->m_nmat;
+  (*ptr)->nkeys = model->m_analysis_flag == HMG_FLUID ? 1 : model->m_nmat;
   (*ptr)->nlocalvars = model->m_lclMtx_dim;
   (*ptr)->nporenodes = model->m_nVelocityNodes;
   (*ptr)->nbordernodes = model->m_nBorderNodes;
@@ -113,7 +115,7 @@ cudapcgFlag_t cudapcgModel_constructor(cudapcgModel_t **ptr, const void *data){
 //---------------------------------
 
 //------------------------------------------------------------------------------
-logical hmgInit(char * data_filename, char * elem_filename){
+logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename){
 
   // Initialize time metric
   time_total = omp_get_wtime();
@@ -130,6 +132,7 @@ logical hmgInit(char * data_filename, char * elem_filename){
   // Feed filename strings to struct
   hmgModel->neutralFile = data_filename;
   hmgModel->imageFile = elem_filename;
+  hmgModel->sdfFile = sdf_filename;
 
   // Store filename for header .nf without extension
   unsigned long nf_strlen = strlen(data_filename);
@@ -146,6 +149,8 @@ logical hmgInit(char * data_filename, char * elem_filename){
   hmgModel->m_saveFields_flag = HMG_FALSE;
   hmgModel->m_fieldsByElem_flag = 0;
 
+  hmgModel->m_scalar_field_data_type_flag = HMG_FLOAT32;
+
   hmgModel->poremap_flag = default_poremap_flag;
   
   hmgModel->x0File = NULL;
@@ -154,6 +159,7 @@ logical hmgInit(char * data_filename, char * elem_filename){
   hmgModel->node_dof_map = NULL;
   hmgModel->elem_material_map = NULL;
   hmgModel->dof_material_map = NULL;
+  hmgModel->density_map = NULL;
   hmgModel->dof_id_map = NULL;
   hmgModel->dof_fluid_map = NULL;
   hmgModel->Mtxs = NULL;
@@ -167,6 +173,16 @@ logical hmgInit(char * data_filename, char * elem_filename){
   // Read data input file
   if (!readData(data_filename))
     return HMG_FALSE;
+    
+  // Check if user provided scalar density field (.bin) and avoid unsupported functionalities
+  if (hmgModel->sdfFile!=NULL){
+    if (hmgModel->m_analysis_flag == HMG_FLUID){
+      printf("WARNING: Scalar density field input is not supported for permeability analysis.\n");
+      hmgModel->sdfFile = NULL;
+    } else {
+      assemblyfree_strategy_flag = CUDAPCG_EBE;
+    }
+  }
 
   unsigned int step_count=0, num_of_steps=2;
   printf("\r    Building model struct...[%3d%%]",(step_count*100)/num_of_steps);
@@ -190,12 +206,44 @@ logical hmgInit(char * data_filename, char * elem_filename){
       free(hmgModel);
       return HMG_FALSE;
   }
-
+  
   // Read elem map input file
   if (!readMaterialMap(elem_filename)){
     free(hmgModel->elem_material_map);
     free(hmgModel);
     return HMG_FALSE;
+  }
+  
+  // Deal with scalar density field
+  if (hmgModel->sdfFile != NULL){
+  
+    // Allocate scalar density field array
+    hmgModel->density_map = (parametricScalarField_t *)malloc(sizeof(parametricScalarField_t)*hmgModel->m_nelem);
+    if (hmgModel->density_map == NULL){
+        printf("ERROR: Memory allocation for scalar density field array has failed.\n");
+        free(hmgModel->elem_material_map);
+        free(hmgModel);
+        return HMG_FALSE;
+    }
+    
+    // Read sdf map input file
+    if (!readScalarDensityFieldMap(sdf_filename)){
+      free(hmgModel->elem_material_map);
+      free(hmgModel->density_map);
+      free(hmgModel);
+      return HMG_FALSE;
+    }
+    
+    // Reset normalized properties (obs: invalid if FLUID)
+    if (hmgModel->m_analysis_flag == HMG_THERMAL){
+      hmgModel->m_nmat=1; // scalar field with varying normalized conductivity matrix
+      hmgModel->props[0]=1.0;
+    } else {// if (hmgModel->m_analysis_flag == HMG_ELASTIC){
+      for (int j=0; j<hmgModel->m_nmat; j++) hmgModel->props[2*j]=1.0; // normalize E. Still might have different poisson ratios
+    }
+    
+  } else {
+    hmgModel->density_map = NULL; // to be sure
   }
 
   step_count=0, num_of_steps=3*(hmgModel->m_analysis_flag != HMG_FLUID)+4*(hmgModel->m_analysis_flag == HMG_FLUID);
@@ -206,6 +254,7 @@ logical hmgInit(char * data_filename, char * elem_filename){
   if (hmgModel->node_dof_map == NULL){
       printf("ERROR: Memory allocation for DOF map has failed.\n");
       free(hmgModel->elem_material_map);
+      if (hmgModel->density_map)  free(hmgModel->density_map);
       free(hmgModel);
       return HMG_FALSE;
   }
@@ -215,30 +264,39 @@ logical hmgInit(char * data_filename, char * elem_filename){
   printf("\r    Assembling maps and local matrices...[%3d%%]",((++step_count)*100)/num_of_steps);
 
   // Allocate hmgModel->dof_material_map array
-  if (hmgModel->m_analysis_flag != HMG_FLUID){
-    hmgModel->dof_material_map = (cudapcgMap_t *) malloc(sizeof(cudapcgMap_t)*hmgModel->m_ndof/hmgModel->m_nnodedof);
-    hmgModel->dof_fluid_map = NULL;
-    if (hmgModel->dof_material_map == NULL){
-        printf("ERROR: Memory allocation for DOF material map has failed.\n");
-        free(hmgModel->node_dof_map);
-        free(hmgModel->elem_material_map);
-        free(hmgModel);
-        return HMG_FALSE;
+  if (hmgModel->sdfFile==NULL){
+    if (hmgModel->m_analysis_flag != HMG_FLUID){
+      hmgModel->dof_material_map = (cudapcgMap_t *) malloc(sizeof(cudapcgMap_t)*hmgModel->m_ndof/hmgModel->m_nnodedof);
+      hmgModel->dof_fluid_map = NULL;
+      if (hmgModel->dof_material_map == NULL){
+          printf("ERROR: Memory allocation for DOF material map has failed.\n");
+          free(hmgModel->node_dof_map);
+          free(hmgModel->elem_material_map);
+          if (hmgModel->density_map) free(hmgModel->density_map);
+          free(hmgModel);
+          return HMG_FALSE;
+      }
+    } else {
+      hmgModel->dof_material_map = NULL;
+      hmgModel->dof_fluid_map = (cudapcgFlag_t *) malloc(sizeof(cudapcgFlag_t)*hmgModel->m_nelem);
+      if (hmgModel->dof_fluid_map == NULL){
+          printf("ERROR: Memory allocation for pore map has failed.\n");
+          free(hmgModel->node_dof_map);
+          free(hmgModel->elem_material_map);
+          if (hmgModel->density_map) free(hmgModel->density_map);
+          free(hmgModel);
+          return HMG_FALSE;
+      }
     }
+    
+    // Assemble hmgModel->dof_material_map
+    hmgModel->assembleDofMaterialMap(hmgModel);
+    
   } else {
     hmgModel->dof_material_map = NULL;
-    hmgModel->dof_fluid_map = (cudapcgFlag_t *) malloc(sizeof(cudapcgFlag_t)*hmgModel->m_nelem);
-    if (hmgModel->dof_fluid_map == NULL){
-        printf("ERROR: Memory allocation for pore map has failed.\n");
-        free(hmgModel->node_dof_map);
-        free(hmgModel->elem_material_map);
-        free(hmgModel);
-        return HMG_FALSE;
-    }
+    hmgModel->dof_fluid_map = NULL;
   }
-
-  // Assemble hmgModel->dof_material_map
-  hmgModel->assembleDofMaterialMap(hmgModel);
+    
   printf("\r    Assembling maps and local matrices...[%3d%%]",((++step_count)*100)/num_of_steps);
 
   // Assmble dof_id_map (used in permeability analysis)
@@ -246,10 +304,11 @@ logical hmgInit(char * data_filename, char * elem_filename){
     hmgModel->dof_id_map = (cudapcgIdMap_t *) malloc(sizeof(cudapcgIdMap_t)*hmgModel->m_nelem);
     if (hmgModel->dof_id_map == NULL){
         printf("ERROR: Memory allocation for pore DOF id map has failed.\n");
-        free(hmgModel->dof_material_map);
-        free(hmgModel->dof_fluid_map);
         free(hmgModel->node_dof_map);
         free(hmgModel->elem_material_map);
+        if (hmgModel->dof_material_map)  free(hmgModel->dof_material_map);
+        if (hmgModel->dof_fluid_map)     free(hmgModel->dof_fluid_map);
+        if (hmgModel->density_map)       free(hmgModel->density_map);
         free(hmgModel);
         return HMG_FALSE;
     }
@@ -269,11 +328,12 @@ logical hmgInit(char * data_filename, char * elem_filename){
   }
   if (hmgModel->Mtxs == NULL || hmgModel->CB == NULL){
       printf("ERROR: Memory allocation for local matrices has failed.\n");
-      free(hmgModel->dof_material_map);
-      free(hmgModel->dof_fluid_map);
       free(hmgModel->dof_id_map);
       free(hmgModel->node_dof_map);
       free(hmgModel->elem_material_map);
+      if (hmgModel->dof_material_map)  free(hmgModel->dof_material_map);
+      if (hmgModel->dof_fluid_map)     free(hmgModel->dof_fluid_map);
+      if (hmgModel->density_map)       free(hmgModel->density_map);
       free(hmgModel);
       return HMG_FALSE;
   }
@@ -289,11 +349,12 @@ logical hmgInit(char * data_filename, char * elem_filename){
       printf("ERROR: Memory allocation for matrix representation of homogenized tensor has failed.\n");
       free(hmgModel->Mtxs);
       free(hmgModel->CB);
-      free(hmgModel->dof_material_map);
-      free(hmgModel->dof_fluid_map);
       free(hmgModel->dof_id_map);
       free(hmgModel->node_dof_map);
       free(hmgModel->elem_material_map);
+      if (hmgModel->dof_material_map)  free(hmgModel->dof_material_map);
+      if (hmgModel->dof_fluid_map)     free(hmgModel->dof_fluid_map);
+      if (hmgModel->density_map)       free(hmgModel->density_map);
       free(hmgModel);
       return HMG_FALSE;
   }
@@ -325,7 +386,8 @@ logical hmgEnd(){
   }
 
   // Free dynamic arrays from memory
-  free(hmgModel->elem_material_map);  hmgModel->elem_material_map = NULL;
+  if (hmgModel->elem_material_map)
+    free(hmgModel->elem_material_map);  hmgModel->elem_material_map = NULL;
   free(hmgModel->node_dof_map);       hmgModel->node_dof_map = NULL;
   if (hmgModel->dof_material_map)
     free(hmgModel->dof_material_map); hmgModel->dof_material_map = NULL;
@@ -333,6 +395,8 @@ logical hmgEnd(){
     free(hmgModel->dof_fluid_map);    hmgModel->dof_fluid_map = NULL;
   if (hmgModel->dof_id_map)
     free(hmgModel->dof_id_map);       hmgModel->dof_id_map = NULL;
+  if (hmgModel->density_map)
+    free(hmgModel->density_map);      hmgModel->density_map = NULL;
   free(hmgModel->Mtxs);               hmgModel->Mtxs = NULL;
   free(hmgModel->CB);                 hmgModel->CB = NULL;
   free(hmgModel->C);                  hmgModel->C = NULL;
@@ -360,7 +424,7 @@ logical hmgEnd(){
 }
 //------------------------------------------------------------------------------
 void hmgSetParallelStrategyFlag(cudapcgFlag_t flag){
-  assemblyfree_strategy_flag = flag;
+  assemblyfree_strategy_flag = hmgModel->sdfFile==NULL ? flag : CUDAPCG_EBE; // safety measure for now
   return;
 }
 //------------------------------------------------------------------------------
@@ -469,6 +533,13 @@ void hmgFindInitialGuesses(unsigned int nlevels){
     return;
   }
 
+  // Check if performing analysis with scalar density field input (not supported for now)
+  if (hmgModel->sdfFile != NULL){
+    printf("WARNING: Initial guess estimation is not yet available for analyses with a scalar field input (.bin).\n");
+    printf("         Null initial guess will be considered (x0 = [0]).\n");
+    return;
+  }
+
   // Append text report
   if (hmgModel->m_report_flag)
     reportAppend(hmgModel->report, "Finding initial guesses...\n");
@@ -557,7 +628,7 @@ void hmgFindInitialGuesses(unsigned int nlevels){
   }
 
   // Allocate x array
-  cudapcgVar_t * x   = (cudapcgVar_t *) malloc(sizeof(cudapcgVar_t)*model_arr[1]->m_ndof);
+  cudapcgVar_t * x  = (cudapcgVar_t *) malloc(sizeof(cudapcgVar_t)*model_arr[1]->m_ndof);
   if (x==NULL){
     printf(" ERROR: Memory allocation for solution array has failed.\n");
     exit(0);
@@ -818,19 +889,28 @@ void hmgSolveHomogenization(){
   cudapcgSetMaxIterations(hmgModel->m_max_iterations);
 
   // Provide material map
-  if (hmgModel->m_analysis_flag != HMG_FLUID){
-    if (assemblyfree_strategy_flag==CUDAPCG_NBN)
-      cudapcgSetImage(hmgModel->dof_material_map);
-    else
-      cudapcgSetImage(hmgModel->elem_material_map);
+  if (hmgModel->sdfFile==NULL){
+    if (hmgModel->m_analysis_flag != HMG_FLUID){
+      if (assemblyfree_strategy_flag==CUDAPCG_NBN)
+        cudapcgSetImage(hmgModel->dof_material_map);
+      else
+        cudapcgSetImage(hmgModel->elem_material_map);
+    } else {
+        cudapcgSetPeriodic2DOFMap(hmgModel->dof_id_map);
+        if (hmgModel->poremap_flag == CUDAPCG_POREMAP_IMG)
+          cudapcgSetPoreMap(hmgModel->dof_fluid_map);
+        else if (hmgModel->poremap_flag == CUDAPCG_POREMAP_NUM){
+          cudapcgSetPoreMap(hmgModel->pore_border_fluidkeys);
+          cudapcgSetDOF2PeriodicMap(hmgModel->pore_dof2node_map);
+        }
+    }
   } else {
-      cudapcgSetPeriodic2DOFMap(hmgModel->dof_id_map);
-      if (hmgModel->poremap_flag == CUDAPCG_POREMAP_IMG)
-      	cudapcgSetPoreMap(hmgModel->dof_fluid_map);
-      else if (hmgModel->poremap_flag == CUDAPCG_POREMAP_NUM){
-				cudapcgSetPoreMap(hmgModel->pore_border_fluidkeys);
-        cudapcgSetDOF2PeriodicMap(hmgModel->pore_dof2node_map);
-      }
+    if (hmgModel->m_analysis_flag == HMG_THERMAL){
+      cudapcgSetParametricDensityField(hmgModel->density_map,hmgModel->density_min,hmgModel->density_max);
+    } else if (hmgModel->m_analysis_flag == HMG_ELASTIC){
+      cudapcgSetParametricDensityField(hmgModel->density_map,hmgModel->density_min,hmgModel->density_max);
+      cudapcgSetImage(hmgModel->elem_material_map);
+    }
   }
 
   // Provide local FEM matrices
@@ -1173,7 +1253,7 @@ logical readData(char * filename){
   file = fopen( filename , "r");
   if (!file) return HMG_FALSE;
   var tol_buffer;
-  unsigned int count=0, num_of_info=9;
+  unsigned int count=0, num_of_info=10;
   printf("\r    Scanning through neutral file...[%3d%%]",(count*100)/num_of_info);
   while (fscanf(file, "%s", str)!=EOF && count<num_of_info){
     if (!strcmp(str,"%type_of_analysis")){
@@ -1243,8 +1323,17 @@ logical readData(char * filename){
 
     //} else if (!strcmp(str,"%volume_fraction")){
 
-    //} else if (!strcmp(str,"%data_type")){
-
+    } else if (!strcmp(str,"%data_type")){
+      fscanf(file, "%s", str);
+      if (!strcmp(str,"float32") || !strcmp(str,"float") || !strcmp(str,"single")){
+        hmgModel->m_scalar_field_data_type_flag = HMG_FLOAT32;
+      } else if (!strcmp(str,"float64") || !strcmp(str,"double")){
+        hmgModel->m_scalar_field_data_type_flag = HMG_FLOAT64;
+      } else if (hmgModel->sdfFile!=NULL){
+        printf("WARNING: %%data_type was set as \"%s\", which is invalid for the scalar density field input. Will attempt to read it as float32.",str);
+        hmgModel->m_scalar_field_data_type_flag = HMG_FLOAT32;
+      }
+      printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
     }
   }
   fclose(file);
@@ -1390,6 +1479,83 @@ logical readMaterialMapRAW(char * filename){
   return HMG_FALSE;
 }
 //------------------------------------------------------------------------------
+logical readScalarDensityFieldMap(char * filename){
+  double buffer;
+  unsigned int i, j, k, ii, jj, kk;
+  unsigned int rows = (hmgModel->m_ny-1) / hmgModel->m_mesh_refinement;
+  unsigned int cols = (hmgModel->m_nx-1) / hmgModel->m_mesh_refinement;
+  unsigned int rows_ref = hmgModel->m_ny-1;
+  unsigned int cols_ref = hmgModel->m_nx-1;
+  unsigned int slices;
+  if (hmgModel->m_dim_flag == HMG_3D)
+    slices = (hmgModel->m_nz-1) / hmgModel->m_mesh_refinement;
+  else
+    slices = 1;
+  if (hmgModel->m_scalar_field_data_type_flag > HMG_FLOAT64){
+    printf("    ERROR: Invalid data type for the scalar field to be read from %s. Must be float32 or float64.\n",filename);
+    return HMG_FALSE;
+  }
+  logical isF32 = (hmgModel->m_scalar_field_data_type_flag == HMG_FLOAT32);
+  void *field = NULL;
+  unsigned int sz = (isF32 ? sizeof(float) : sizeof(double));
+  field = malloc(sz*hmgModel->m_nelem);
+  if (field==NULL){
+    printf("    ERROR: Failed to allocate memory to read scalar field from %s.\n",filename);
+    return HMG_FALSE;
+  }
+  printf("    Getting density field from .bin...");
+  FILE *file=NULL;
+  file = fopen(filename,"rb");
+  if (file==NULL){
+    printf(" ERROR: Failed to open %s.\n",filename);
+    free(field);
+    return HMG_FALSE;
+  }
+  size_t managed_to_read = fread(field,sz,hmgModel->m_nelem,file);
+  fclose(file);
+  if (managed_to_read <  hmgModel->m_nelem){
+    printf(" ERROR: Failed to read all %e MB from %s.\n",(float)(sz*hmgModel->m_nelem)/1024.0/1024.0,filename);
+    free(field);
+    return HMG_FALSE;
+  }
+  printf("Done.\n");
+  unsigned int props_stride = hmgModel->m_analysis_flag==HMG_ELASTIC ? 2 : 1;
+  double Emax=(double) (isF32 ? VOID_AS_FLOAT(field,0) : VOID_AS_DOUBLE(field,0));
+  Emax *= hmgModel->props[hmgModel->elem_material_map[0]*props_stride];
+  double Emin=Emax;
+  double thisE;
+  for (unsigned int i=1; i<(rows*cols*slices); i++){
+    thisE = (double) (isF32 ? VOID_AS_FLOAT(field,i) : VOID_AS_DOUBLE(field,i));
+    thisE *= hmgModel->props[hmgModel->elem_material_map[i]*props_stride];
+    Emax = thisE>Emax ? thisE : Emax;
+    Emin = thisE<Emin ? thisE : Emin;
+  }
+  if (Emax==Emin) Emin=Emax-1.0; // for safety
+  double dE = Emax-Emin;
+  hmgModel->density_max=Emax;
+  hmgModel->density_min=Emin;
+  printf("\r    Building parametric field...[%3d%%]",0);
+  for (k = 0; k<slices; k++){
+    for (i = 0; i<rows; i++){
+      for (j = 0; j<cols; j++){
+        buffer = (double) (isF32 ? VOID_AS_FLOAT(field,j+i*cols+k*rows*cols) : VOID_AS_DOUBLE(field,j+i*cols+k*rows*cols));
+        buffer *= hmgModel->props[hmgModel->elem_material_map[(i+j*rows_ref+k*rows_ref*cols_ref)*hmgModel->m_mesh_refinement]*props_stride];
+        for (kk = hmgModel->m_mesh_refinement*k; kk<(hmgModel->m_mesh_refinement*(k+1)*(hmgModel->m_nz>0)+(hmgModel->m_nz<1)); kk++){
+          for (ii = hmgModel->m_mesh_refinement*i; ii<hmgModel->m_mesh_refinement*(i+1); ii++){
+            for (jj = hmgModel->m_mesh_refinement*j; jj<hmgModel->m_mesh_refinement*(j+1); jj++){
+              hmgModel->density_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (parametricScalarField_t)(65535*(buffer-Emin)/dE); // uint16
+            }
+          }
+        }
+      }
+    }
+    printf("\r    Building parametric field...[%3d%%]",((k+1)*100)/slices);
+  }
+  printf("\n");
+  free(field);
+  return HMG_TRUE;
+}
+//------------------------------------------------------------------------------
 void free_model_arrs(hmgModel_t * model){
   free(model->elem_material_map);
   free(model->node_dof_map);
@@ -1402,6 +1568,7 @@ void assemble_coarse_copy(hmgModel_t * coarse_model, hmgModel_t * original_model
   coarse_model->neutralFile            = original_model->neutralFile;
   coarse_model->neutralFile_noExt      = original_model->neutralFile_noExt;
   coarse_model->imageFile              = original_model->imageFile;
+  coarse_model->sdfFile                = original_model->sdfFile;
   
   coarse_model->m_dim_flag             = original_model->m_dim_flag;
   coarse_model->m_analysis_flag        = original_model->m_analysis_flag;

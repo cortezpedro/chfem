@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <omp.h>
 #include <cuda.h>
@@ -80,6 +81,8 @@
 typedef unsigned char cudapcgFlag_t; // 8bit
 typedef unsigned int cudapcgIdMap_t; // 32bit
 
+typedef uint16_t parametricScalarField_t;
+
 typedef struct _pcgmodel{
 
     char *name;
@@ -87,6 +90,7 @@ typedef struct _pcgmodel{
     cudapcgFlag_t freeAllowed_flag;
     cudapcgFlag_t parStrategy_flag;
     cudapcgFlag_t poremap_flag;
+    cudapcgFlag_t parametric_density_field_flag;
 
     unsigned int nrows;
     unsigned int ncols;
@@ -101,8 +105,11 @@ typedef struct _pcgmodel{
     unsigned int nbordernodes;
     unsigned int nhmgvars;
 
+    double limits_density_field[2];
+
     // gpu arrays to characterize the model
     cudapcgMap_t *image;
+    parametricScalarField_t *parametric_density_field;
     
     cudapcgFlag_t *pore_map;          // used in fluid simulations
     cudapcgFlag_t *border_pore_map;   // used in fluid simulations

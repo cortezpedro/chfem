@@ -11,6 +11,7 @@ typedef struct _input{
 
   char * neutral_file;
   char * raw_file;
+  char * sdf_bin_file;
   
   unsigned char exportFields_flag;
   unsigned char fieldsByElem_flag;
@@ -28,8 +29,6 @@ typedef struct _input{
   unsigned int pcg_stopcrit_flag;
 
   unsigned int poremap_flag;
-
-  
 
   unsigned int hmg_direction_flag; //hmgFlag_t
   unsigned int solver_flag; //cudapcgFlag_t

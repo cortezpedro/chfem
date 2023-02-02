@@ -23,10 +23,17 @@ logical initModel_elastic_2D(hmgModel_t *model){
 	#else // ELASTIC_2D_PLANESTRAIN
 	  model->assembleLocalMtxs = assembleLocalMtxs_elastic_2D_PlaneStrain;
 	#endif
-	model->assembleRHS = assembleRHS_elastic_2D;
-	model->updateC = updateC_elastic_2D;
+	
+	if (model->sdfFile==NULL){
+	  model->assembleRHS = assembleRHS_elastic_2D;
+	  model->updateC = updateC_elastic_2D;
+	  model->saveFields = saveFields_elastic_2D;
+	} else {
+	  model->assembleRHS = assembleRHS_elastic_2D_ScalarDensityField;
+	  model->updateC = updateC_elastic_2D_ScalarDensityField;
+	  model->saveFields = saveFields_elastic_2D_ScalarDensityField;
+	}
 	model->printC = printC_elastic_2D;
-	model->saveFields = saveFields_elastic_2D;
 
 	model->assembleNodeDofMap = assembleNodeDofMap_2D;
 	model->assembleDofIdMap = NULL;
@@ -191,7 +198,7 @@ void assembleRHS_elastic_2D(hmgModel_t *model){
         model->RHS[i] = 0.0;
 
 	unsigned int e,n;
-	cudapcgVar_t * thisK;
+	cudapcgVar_t * thisK=NULL;
 
 	if (model->m_hmg_flag == HOMOGENIZE_X){
 		for (i=0; i<dim_y; i++){
@@ -260,7 +267,91 @@ void assembleRHS_elastic_2D(hmgModel_t *model){
 
 	return;
 }
+//------------------------------------------------------------------------------
+void assembleRHS_elastic_2D_ScalarDensityField(hmgModel_t *model){
 
+	unsigned int dim_x = model->m_nx-1;
+	unsigned int dim_y = model->m_ny-1;
+
+	unsigned int i;
+    #pragma omp parallel for
+    for (i=0; i<model->m_ndof; i++)
+        model->RHS[i] = 0.0;
+
+	unsigned int e,n;
+	cudapcgVar_t * thisK = &(model->Mtxs[0]);
+	cudapcgVar_t scl=1.0;
+
+	if (model->m_hmg_flag == HOMOGENIZE_X){
+		for (i=0; i<dim_y; i++){
+			e = (model->m_nx-2)*dim_y+i;
+			thisK = &(model->Mtxs[model->elem_material_map[e]*model->m_lclMtx_dim]);
+			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
+
+			n = e+1+(e/dim_y);
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[2]+thisK[4])*dim_x;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[10]+thisK[12])*dim_x;
+
+			n += model->m_ny;
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[18]+thisK[20])*dim_x;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[26]+thisK[28])*dim_x;
+
+			n -= 1;
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[34]+thisK[36])*dim_x;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[42]+thisK[44])*dim_x;
+
+			n -= model->m_ny;
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[50]+thisK[52])*dim_x;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[58]+thisK[60])*dim_x;
+		}
+	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
+		for (i=0; i<dim_x; i++){
+			e = i*dim_y;
+			thisK = &(model->Mtxs[model->elem_material_map[e]*model->m_lclMtx_dim]);
+			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
+
+			n = e+1+(e/dim_y);
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[5]+thisK[7])*dim_y;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[13]+thisK[15])*dim_y;
+
+			n += model->m_ny;
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[21]+thisK[23])*dim_y;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[29]+thisK[31])*dim_y;
+
+			n -= 1;
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[37]+thisK[39])*dim_y;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[45]+thisK[47])*dim_y;
+
+			n -= model->m_ny;
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[53]+thisK[55])*dim_y;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[61]+thisK[63])*dim_y;
+		}
+	} else if (model->m_hmg_flag == HOMOGENIZE_XY){
+		for (i=0; i<dim_x; i++){
+			e = i*dim_y;
+			thisK = &(model->Mtxs[model->elem_material_map[e]*model->m_lclMtx_dim]);
+			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
+
+			n = e+1+(e/dim_y);
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[4]+thisK[6])*dim_y;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[12]+thisK[14])*dim_y;
+
+			n += model->m_ny;
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[20]+thisK[22])*dim_y;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[28]+thisK[30])*dim_y;
+
+			n -= 1;
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[36]+thisK[38])*dim_y;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[44]+thisK[46])*dim_y;
+
+			n -= model->m_ny;
+			model->RHS[model->node_dof_map[n]]   -= scl*(thisK[52]+thisK[54])*dim_y;
+			model->RHS[model->node_dof_map[n]+1] -= scl*(thisK[60]+thisK[62])*dim_y;
+		}
+	}
+
+	return;
+}
 //------------------------------------------------------------------------------
 void updateC_elastic_2D(hmgModel_t *model, cudapcgVar_t * D){
 	unsigned int n;
@@ -269,7 +360,7 @@ void updateC_elastic_2D(hmgModel_t *model, cudapcgVar_t * D){
 	unsigned int dim_y = model->m_ny-1;
 	var C_i, C_j, C_k;
 	var d;
-	cudapcgVar_t * thisCB;
+	cudapcgVar_t * thisCB=NULL;
 
 	unsigned int i,j,k;
 	if (model->m_hmg_flag == HOMOGENIZE_X){
@@ -330,6 +421,7 @@ void updateC_elastic_2D(hmgModel_t *model, cudapcgVar_t * D){
 		for (e=0;e<model->m_nelem;e+=dim_y){
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
+			
 
 			// node 2 (right,top)
 			C_i = thisCB[4]; C_j = thisCB[12]; C_k = thisCB[20];
@@ -378,6 +470,141 @@ void updateC_elastic_2D(hmgModel_t *model, cudapcgVar_t * D){
 		C_i += thisCB[6]*d; C_j += thisCB[14]*d; C_k += thisCB[22]*d;
 		d = D[model->node_dof_map[n]+1];
 		C_i += thisCB[7]*d; C_j += thisCB[15]*d; C_k += thisCB[23]*d;
+
+		#pragma omp critical
+		{
+			model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
+		}
+	}
+
+	model->C[i] /= model->m_nelem; model->C[j] /= model->m_nelem; model->C[k] /= model->m_nelem;
+
+	return;
+}
+//------------------------------------------------------------------------------
+void updateC_elastic_2D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
+	unsigned int n;
+	unsigned int e;
+	unsigned int dim_x = model->m_nx-1;
+	unsigned int dim_y = model->m_ny-1;
+	var C_i, C_j, C_k;
+	var d;
+	cudapcgVar_t * thisCB=NULL;
+	cudapcgVar_t scl=1.0;
+
+	unsigned int i,j,k;
+	if (model->m_hmg_flag == HOMOGENIZE_X){
+		i = 0; j = 3; k = 6;
+	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
+		i = 1; j = 4; k = 7;
+	} else if (model->m_hmg_flag == HOMOGENIZE_XY){
+		i = 2; j = 5; k = 8;
+	}
+
+	C_i = 0.0; C_j = 0.0; C_k = 0.0;
+
+	if (model->m_hmg_flag == HOMOGENIZE_X){
+
+		#pragma omp parallel for private(C_i,C_j,C_k,thisCB)
+		for (e=model->m_nelem-model->m_ny+1;e<model->m_nelem;e++){
+
+			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
+			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
+
+			// node 1 (right,bottom)
+			C_i = thisCB[2]; C_j = thisCB[10]; C_k = thisCB[18];
+
+			// node 2 (right,top)
+			C_i += thisCB[4]; C_j += thisCB[12]; C_k += thisCB[20];
+
+			C_i *= scl*dim_x; C_j *= scl*dim_x; C_k *= scl*dim_x;
+
+			#pragma omp critical
+			{
+				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
+			}
+		}
+
+	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
+
+		#pragma omp parallel for private(C_i,C_j,C_k,thisCB)
+		for (e=0;e<model->m_nelem;e+=dim_y){
+
+			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
+			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
+
+			// node 2 (right,top)
+			C_i = thisCB[5]; C_j = thisCB[13]; C_k = thisCB[21];
+
+			// node 3 (left,top)
+			C_i += thisCB[7]; C_j += thisCB[15]; C_k += thisCB[23];
+
+			C_i *= scl*dim_y; C_j *= scl*dim_y; C_k *= scl*dim_y;
+
+			#pragma omp critical
+			{
+				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
+			}
+		}
+
+	} else if (model->m_hmg_flag == HOMOGENIZE_XY){
+
+		#pragma omp parallel for private(C_i,C_j,C_k,thisCB)
+		for (e=0;e<model->m_nelem;e+=dim_y){
+
+			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
+			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
+
+			// node 2 (right,top)
+			C_i = thisCB[4]; C_j = thisCB[12]; C_k = thisCB[20];
+
+			// node 3 (left,top)
+			C_i += thisCB[6]; C_j += thisCB[14]; C_k += thisCB[22];
+
+			C_i *= scl*dim_y; C_j *= scl*dim_y; C_k *= scl*dim_y;
+
+			#pragma omp critical
+			{
+				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
+			}
+		}
+	}
+
+	#pragma omp parallel for private(C_i,C_j,C_k,d,thisCB,n)
+	for (e=0;e<model->m_nelem;e++){
+
+		thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
+		scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
+
+		// node 0 (left,bottom)
+		n = e+1+(e/dim_y);
+		d = D[model->node_dof_map[n]];
+		C_i = thisCB[0]*d; C_j = thisCB[8]*d; C_k = thisCB[16]*d;
+		d = D[model->node_dof_map[n]+1];
+		C_i += thisCB[1]*d; C_j += thisCB[9]*d; C_k += thisCB[17]*d;
+
+		// node 1 (right,bottom)
+		n+=model->m_ny;
+		d = D[model->node_dof_map[n]];
+		C_i += thisCB[2]*d; C_j += thisCB[10]*d; C_k += thisCB[18]*d;
+		d = D[model->node_dof_map[n]+1];
+		C_i += thisCB[3]*d; C_j += thisCB[11]*d; C_k += thisCB[19]*d;
+
+		// node 2 (right,top)
+		n-=1;
+		d = D[model->node_dof_map[n]];
+		C_i += thisCB[4]*d; C_j += thisCB[12]*d; C_k += thisCB[20]*d;
+		d = D[model->node_dof_map[n]+1];
+		C_i += thisCB[5]*d; C_j += thisCB[13]*d; C_k += thisCB[21]*d;
+
+		// node 3 (left,top)
+		n-=model->m_ny;
+		d = D[model->node_dof_map[n]];
+		C_i += thisCB[6]*d; C_j += thisCB[14]*d; C_k += thisCB[22]*d;
+		d = D[model->node_dof_map[n]+1];
+		C_i += thisCB[7]*d; C_j += thisCB[15]*d; C_k += thisCB[23]*d;
+		
+		C_i *= scl; C_j *= scl; C_k *= scl;
 
 		#pragma omp critical
 		{
@@ -715,6 +942,11 @@ void saveFields_elastic_2D(hmgModel_t *model, cudapcgVar_t * D){
 	free(local_d);
   free(S);
 
+  return;
+}
+//------------------------------------------------------------------------------
+void saveFields_elastic_2D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
+  printf("WARNING: Field exportation not supported for scalar field input (.bin) yet.\n");
   return;
 }
 //------------------------------------------------------------------------------

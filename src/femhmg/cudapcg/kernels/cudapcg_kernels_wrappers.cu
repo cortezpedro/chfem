@@ -570,6 +570,10 @@ void freePreConditioner(){
 }
 //------------------------------------------------------------------------------
 void assemblePreConditioner_thermal_2D(cudapcgModel_t *m){
+    if (m->parametric_density_field_flag == CUDAPCG_TRUE){
+      flag_PreConditionerWasAssembled = CUDAPCG_FALSE;
+      return;
+    }
     if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_assemblePreConditioner_thermal_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
@@ -589,6 +593,10 @@ void assemblePreConditioner_thermal_2D(cudapcgModel_t *m){
 }
 //------------------------------------------------------------------------------
 void assemblePreConditioner_thermal_3D(cudapcgModel_t *m){
+    if (m->parametric_density_field_flag == CUDAPCG_TRUE){
+      flag_PreConditionerWasAssembled = CUDAPCG_FALSE;
+      return;
+    }
     if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_assemblePreConditioner_thermal_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
@@ -608,6 +616,10 @@ void assemblePreConditioner_thermal_3D(cudapcgModel_t *m){
 }
 //------------------------------------------------------------------------------
 void assemblePreConditioner_elastic_2D(cudapcgModel_t *m){
+    if (m->parametric_density_field_flag == CUDAPCG_TRUE){
+      flag_PreConditionerWasAssembled = CUDAPCG_FALSE;
+      return;
+    }
     if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_assemblePreConditioner_elastic_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
@@ -627,6 +639,10 @@ void assemblePreConditioner_elastic_2D(cudapcgModel_t *m){
 }
 //------------------------------------------------------------------------------
 void assemblePreConditioner_elastic_3D(cudapcgModel_t *m){
+    if (m->parametric_density_field_flag == CUDAPCG_TRUE){
+      flag_PreConditionerWasAssembled = CUDAPCG_FALSE;
+      return;
+    }
     if (m->parStrategy_flag == CUDAPCG_NBN){
       // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
       kernel_assemblePreConditioner_elastic_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
@@ -653,20 +669,28 @@ void applyPreConditioner_thermal_2D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcg
         return;
     }
     if (v2==NULL) v2=v1;
-    if (m->parStrategy_flag == CUDAPCG_NBN){
-      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-      kernel_applyPreConditioner_thermal_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+    if (m->parametric_density_field_flag == CUDAPCG_FALSE){
+      if (m->parStrategy_flag == CUDAPCG_NBN){
+        // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+        kernel_applyPreConditioner_thermal_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,v2,scl,m->nvars,m->image,res);
+      } else if (m->parStrategy_flag == CUDAPCG_EBE){
+        kernel_applyPreConditioner_thermal_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,res);
+      }
+    } else {
+      kernel_applyPreConditioner_thermal_2D_ElemByElem_ScalarDensityField<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
         #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
           K,
         #endif
-        v1,v2,scl,m->nvars,m->image,res);
-    } else if (m->parStrategy_flag == CUDAPCG_EBE){
-      kernel_applyPreConditioner_thermal_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-          K,
-        #endif
-        v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,res);
-    } 
+        v1,v2,scl,m->nelem,m->parametric_density_field,m->limits_density_field[0],m->limits_density_field[1],m->ncols,m->nrows,res);
+    }
     return;
 }
 //------------------------------------------------------------------------------
@@ -678,19 +702,27 @@ void applyPreConditioner_thermal_3D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcg
         return;
     }
     if (v2==NULL) v2=v1;
-    if (m->parStrategy_flag == CUDAPCG_NBN){
-      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-      kernel_applyPreConditioner_thermal_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+    if (m->parametric_density_field_flag == CUDAPCG_FALSE){
+      if (m->parStrategy_flag == CUDAPCG_NBN){
+        // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+        kernel_applyPreConditioner_thermal_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,v2,scl,m->nvars,m->image,res);
+      } else if (m->parStrategy_flag == CUDAPCG_EBE){
+        kernel_applyPreConditioner_thermal_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res);
+      }
+    } else {
+      kernel_applyPreConditioner_thermal_3D_ElemByElem_ScalarDensityField<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
         #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
           K,
         #endif
-        v1,v2,scl,m->nvars,m->image,res);
-    } else if (m->parStrategy_flag == CUDAPCG_EBE){
-      kernel_applyPreConditioner_thermal_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-          K,
-        #endif
-        v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res);
+        v1,v2,scl,m->nelem,m->parametric_density_field,m->limits_density_field[0],m->limits_density_field[1],m->ncols,m->nrows,m->nlayers,res);
     }
     return;
 }
@@ -703,19 +735,27 @@ void applyPreConditioner_elastic_2D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcg
         return;
     }
     if (v2==NULL) v2=v1;
-    if (m->parStrategy_flag == CUDAPCG_NBN){
-      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-      kernel_applyPreConditioner_elastic_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+    if (m->parametric_density_field_flag == CUDAPCG_FALSE){
+      if (m->parStrategy_flag == CUDAPCG_NBN){
+        // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+        kernel_applyPreConditioner_elastic_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,v2,scl,m->nvars,m->image,res);
+      } else if (m->parStrategy_flag == CUDAPCG_EBE){
+        kernel_applyPreConditioner_elastic_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,res);
+      }
+    } else {
+      kernel_applyPreConditioner_elastic_2D_ElemByElem_ScalarDensityField<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
         #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
           K,
         #endif
-        v1,v2,scl,m->nvars,m->image,res);
-    } else if (m->parStrategy_flag == CUDAPCG_EBE){
-      kernel_applyPreConditioner_elastic_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-          K,
-        #endif
-        v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,res);
+        v1,v2,scl,m->nelem,m->image,m->parametric_density_field,m->limits_density_field[0],m->limits_density_field[1],m->ncols,m->nrows,res);
     }
     return;
 }
@@ -728,19 +768,27 @@ void applyPreConditioner_elastic_3D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcg
         return;
     }
     if (v2==NULL) v2=v1;
-    if (m->parStrategy_flag == CUDAPCG_NBN){
-        // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-        kernel_applyPreConditioner_elastic_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+    if (m->parametric_density_field_flag == CUDAPCG_FALSE){
+      if (m->parStrategy_flag == CUDAPCG_NBN){
+          // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+          kernel_applyPreConditioner_elastic_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,v2,scl,m->nvars,m->image,res);
+      } else if (m->parStrategy_flag == CUDAPCG_EBE){
+          kernel_applyPreConditioner_elastic_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res);
+      }
+    } else {
+      kernel_applyPreConditioner_elastic_3D_ElemByElem_ScalarDensityField<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
         #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
           K,
         #endif
-        v1,v2,scl,m->nvars,m->image,res);
-    } else if (m->parStrategy_flag == CUDAPCG_EBE){
-        kernel_applyPreConditioner_elastic_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-          K,
-        #endif
-        v1,v2,scl,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res);
+        v1,v2,scl,m->nelem,m->image,m->parametric_density_field,m->limits_density_field[0],m->limits_density_field[1],m->ncols,m->nrows,m->nlayers,res);
     }
     return;
 }
@@ -813,20 +861,29 @@ void applyPreConditioner_fluid_3D(cudapcgModel_t *m, cudapcgVar_t *v1, cudapcgVa
 //------------------------------------------------------------------------------
 void Aprod_thermal_2D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
     
-    if (m->parStrategy_flag == CUDAPCG_NBN){
-      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-      kernel_Aprod_thermal_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-        K,
-      #endif
-      v,m->nvars,m->image,m->ncols,m->nrows,res,scl,isIncrement);
-    } else if (m->parStrategy_flag == CUDAPCG_EBE){
-      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
-      kernel_Aprod_thermal_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+    if (m->parametric_density_field_flag == CUDAPCG_FALSE){
+      if (m->parStrategy_flag == CUDAPCG_NBN){
+        // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+        kernel_Aprod_thermal_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
         #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
           K,
         #endif
-        v,m->nelem,m->image,m->ncols,m->nrows,res,scl);
+        v,m->nvars,m->image,m->ncols,m->nrows,res,scl,isIncrement);
+      } else if (m->parStrategy_flag == CUDAPCG_EBE){
+        if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+        kernel_Aprod_thermal_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nelem,m->image,m->ncols,m->nrows,res,scl);
+      }
+    } else {
+      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+      kernel_Aprod_thermal_2D_ElemByElem_ScalarDensityField<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v,m->nelem,m->parametric_density_field,m->limits_density_field[0],m->limits_density_field[1],m->ncols,m->nrows,res,scl);
     }
 
     return;
@@ -834,20 +891,29 @@ void Aprod_thermal_2D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cud
 //------------------------------------------------------------------------------
 void Aprod_thermal_3D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
     
-    if (m->parStrategy_flag == CUDAPCG_NBN){
-      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-      kernel_Aprod_thermal_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-        K,
-      #endif
-      v,m->nvars,m->image,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
-    } else if (m->parStrategy_flag == CUDAPCG_EBE){
-      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
-      kernel_Aprod_thermal_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+    if (m->parametric_density_field_flag == CUDAPCG_FALSE){
+      if (m->parStrategy_flag == CUDAPCG_NBN){
+        // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+        kernel_Aprod_thermal_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
         #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
           K,
         #endif
-        v,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res,scl);
+        v,m->nvars,m->image,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
+      } else if (m->parStrategy_flag == CUDAPCG_EBE){
+        if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+        kernel_Aprod_thermal_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res,scl);
+      }
+    } else {
+      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+      kernel_Aprod_thermal_3D_ElemByElem_ScalarDensityField<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v,m->nelem,m->parametric_density_field,m->limits_density_field[0],m->limits_density_field[1],m->ncols,m->nrows,m->nlayers,res,scl);
     }
 
     return;
@@ -855,20 +921,29 @@ void Aprod_thermal_3D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cud
 //------------------------------------------------------------------------------
 void Aprod_elastic_2D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
     
-    if (m->parStrategy_flag == CUDAPCG_NBN){
-      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-      kernel_Aprod_elastic_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-        K,
-      #endif
-      v,m->nvars,m->image,m->ncols,m->nrows,res,scl,isIncrement);
-    } else if (m->parStrategy_flag == CUDAPCG_EBE){
-      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
-      kernel_Aprod_elastic_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+    if (m->parametric_density_field_flag == CUDAPCG_FALSE){
+      if (m->parStrategy_flag == CUDAPCG_NBN){
+        // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+        kernel_Aprod_elastic_2D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
         #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
           K,
         #endif
-        v,m->nelem,m->image,m->ncols,m->nrows,res,scl);
+        v,m->nvars,m->image,m->ncols,m->nrows,res,scl,isIncrement);
+      } else if (m->parStrategy_flag == CUDAPCG_EBE){
+        if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+        kernel_Aprod_elastic_2D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nelem,m->image,m->ncols,m->nrows,res,scl);
+      }
+    } else {
+      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+      kernel_Aprod_elastic_2D_ElemByElem_ScalarDensityField<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v,m->nelem,m->image,m->parametric_density_field,m->limits_density_field[0],m->limits_density_field[1],m->ncols,m->nrows,res,scl);
     }
 
     return;
@@ -876,22 +951,31 @@ void Aprod_elastic_2D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cud
 //------------------------------------------------------------------------------
 void Aprod_elastic_3D(cudapcgModel_t *m, cudapcgVar_t * v, cudapcgVar_t scl, cudapcgFlag_t isIncrement, cudapcgVar_t * res){
     
-    if (m->parStrategy_flag == CUDAPCG_NBN){
-      // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
-      kernel_Aprod_elastic_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
-      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-        K,
-      #endif
-      v,m->nvars,m->image,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
-    } else if (m->parStrategy_flag == CUDAPCG_EBE){
-      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
-      kernel_Aprod_elastic_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+    if (m->parametric_density_field_flag == CUDAPCG_FALSE){
+      if (m->parStrategy_flag == CUDAPCG_NBN){
+        // Obs.: Grid is dimensioned with model->nelem because it is equivalent numerically to (valid_nodes/dof_per_node)
+        kernel_Aprod_elastic_3D_NodeByNode<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
         #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
           K,
         #endif
-        v,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res,scl);
+        v,m->nvars,m->image,m->ncols,m->nrows,m->nlayers,res,scl,isIncrement);
+      } else if (m->parStrategy_flag == CUDAPCG_EBE){
+        if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+        kernel_Aprod_elastic_3D_ElemByElem<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v,m->nelem,m->image,m->ncols,m->nrows,m->nlayers,res,scl);
+      }
+    } else {
+      if (!isIncrement) kernel_zeros<<<CEIL(m->nvars,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(res,m->nvars);
+      kernel_Aprod_elastic_3D_ElemByElem_ScalarDensityField<<<CEIL(m->nelem,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v,m->nelem,m->image,m->parametric_density_field,m->limits_density_field[0],m->limits_density_field[1],m->ncols,m->nrows,m->nlayers,res,scl);
     }
-      
+
     return;
 }
 //------------------------------------------------------------------------------

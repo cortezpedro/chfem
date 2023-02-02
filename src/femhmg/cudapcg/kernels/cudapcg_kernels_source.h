@@ -86,6 +86,10 @@ __global__ void kernel_applyPreConditioner_thermal_2D_ElemByElem(cudapcgVar_t * 
 
 __global__ void kernel_Aprod_thermal_2D_ElemByElem(cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl);
 
+__global__ void kernel_applyPreConditioner_thermal_2D_ElemByElem_ScalarDensityField(cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t * res);
+
+__global__ void kernel_Aprod_thermal_2D_ElemByElem_ScalarDensityField(cudapcgVar_t * v, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl);
+
 #else
 
 __global__ void kernel_assemblePreConditioner_thermal_2D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * M, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny);
@@ -93,6 +97,10 @@ __global__ void kernel_assemblePreConditioner_thermal_2D_ElemByElem(cudapcgVar_t
 __global__ void kernel_applyPreConditioner_thermal_2D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t * res);
 
 __global__ void kernel_Aprod_thermal_2D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl);
+
+__global__ void kernel_applyPreConditioner_thermal_2D_ElemByElem_ScalarDensityField(cudapcgVar_t *K, cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t * res);
+
+__global__ void kernel_Aprod_thermal_2D_ElemByElem_ScalarDensityField(cudapcgVar_t *K, cudapcgVar_t * v, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl);
 
 #endif
 
@@ -140,6 +148,10 @@ __global__ void kernel_applyPreConditioner_thermal_3D_ElemByElem(cudapcgVar_t * 
 
 __global__ void kernel_Aprod_thermal_3D_ElemByElem(cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl);
 
+__global__ void kernel_applyPreConditioner_thermal_3D_ElemByElem_ScalarDensityField(cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res);
+
+__global__ void kernel_Aprod_thermal_3D_ElemByElem_ScalarDensityField(cudapcgVar_t * v, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl);
+
 #else
 
 __global__ void kernel_assemblePreConditioner_thermal_3D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * M, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz);
@@ -147,6 +159,10 @@ __global__ void kernel_assemblePreConditioner_thermal_3D_ElemByElem(cudapcgVar_t
 __global__ void kernel_applyPreConditioner_thermal_3D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res);
 
 __global__ void kernel_Aprod_thermal_3D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl);
+
+__global__ void kernel_applyPreConditioner_thermal_3D_ElemByElem_ScalarDensityField(cudapcgVar_t *K, cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res);
+
+__global__ void kernel_Aprod_thermal_3D_ElemByElem_ScalarDensityField(cudapcgVar_t *K, cudapcgVar_t * v, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl);
 
 #endif
 
@@ -194,6 +210,10 @@ __global__ void kernel_applyPreConditioner_elastic_2D_ElemByElem(cudapcgVar_t * 
 
 __global__ void kernel_Aprod_elastic_2D_ElemByElem(cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl);
 
+__global__ void kernel_applyPreConditioner_elastic_2D_ElemByElem_ScalarDensityField(cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t * res);
+
+__global__ void kernel_Aprod_elastic_2D_ElemByElem_ScalarDensityField(cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl);
+
 #else
 
 __global__ void kernel_assemblePreConditioner_elastic_2D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * M, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny);
@@ -201,6 +221,10 @@ __global__ void kernel_assemblePreConditioner_elastic_2D_ElemByElem(cudapcgVar_t
 __global__ void kernel_applyPreConditioner_elastic_2D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t * res);
 
 __global__ void kernel_Aprod_elastic_2D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl);
+
+__global__ void kernel_applyPreConditioner_elastic_2D_ElemByElem_ScalarDensityField(cudapcgVar_t *K, cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t * res);
+
+__global__ void kernel_Aprod_elastic_2D_ElemByElem_ScalarDensityField(cudapcgVar_t *K, cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl);
 
 #endif
 
@@ -248,6 +272,10 @@ __global__ void kernel_applyPreConditioner_elastic_3D_ElemByElem(cudapcgVar_t * 
 
 __global__ void kernel_Aprod_elastic_3D_ElemByElem(cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl);
 
+__global__ void kernel_applyPreConditioner_elastic_3D_ElemByElem_ScalarDensityField(cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res);
+
+__global__ void kernel_Aprod_elastic_3D_ElemByElem_ScalarDensityField(cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl);
+
 #else
 
 __global__ void kernel_assemblePreConditioner_elastic_3D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * M, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz);
@@ -255,6 +283,10 @@ __global__ void kernel_assemblePreConditioner_elastic_3D_ElemByElem(cudapcgVar_t
 __global__ void kernel_applyPreConditioner_elastic_3D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res);
 
 __global__ void kernel_Aprod_elastic_3D_ElemByElem(cudapcgVar_t *K, cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl);
+
+__global__ void kernel_applyPreConditioner_elastic_3D_ElemByElem_ScalarDensityField(cudapcgVar_t *K, cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res);
+
+__global__ void kernel_Aprod_elastic_3D_ElemByElem_ScalarDensityField(cudapcgVar_t *K, cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl);
 
 #endif
 

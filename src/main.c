@@ -81,13 +81,14 @@ int main(int argc, char * argv[]){
   // Check input
   if (!readInput(argv,argc,user_input)){
     free(user_input);
+    printf("Failed to parse arguments.\nProcess aborted.\n");
     return 0;
   }
 
   printf("#######################################################\n");
 
   // Initialize FEM model for homogenization
-  if (!hmgInit(user_input->neutral_file,user_input->raw_file)){
+  if (!hmgInit(user_input->neutral_file,user_input->raw_file,user_input->sdf_bin_file)){
     printf("Failed to properly read input files.\nProcess aborted.\n");
     printf("#######################################################\n");
     free(user_input);
@@ -168,6 +169,7 @@ void printHelp(){
   printf("\t-c: Stopping criteria for the PCG method: 0 - L2 (default), 1 - Inf, 2 - L2+Error.\n");
   printf("\t-d: Target direction: 0 - X, 1 - Y, 2 - Z, 3 - YZ, 4 - XZ, 5 - XY, 6 - ALL (default).\n");
   printf("\t-e: Export fields from simulation (by nodes).\n");
+  printf("\t-f: Input scalar density field. Must be followed by a [.bin] file.\n");
   printf("\t-h: Print this help info and exit.\n");
   printf("\t-i: Input files. Must be followed by: [.nf] [.raw].\n");
   printf("\t-m: Write metrics report. Must be followed by a string with a filename.\n");
@@ -245,6 +247,11 @@ unsigned char readInput(char *arr[], unsigned int sz, chfemgpuInput_t * user_inp
         user_input->binary_file = str_buffer;
         ptr_prop = NULL;
         valid_input_flag=1;
+      } else if (!strcmp(arr[i],"-f")){
+        str_buffer = READ_ENTRY(++i,arr,sz); if (str_buffer==NULL) return 0;
+        user_input->sdf_bin_file = str_buffer;
+        ptr_prop = NULL;
+        valid_input_flag=1;
       } else if (!strcmp(arr[i],"-m")){
         str_buffer = READ_ENTRY(++i,arr,sz); if (str_buffer==NULL) return 0;
         user_input->writeReport_flag = 1;
@@ -295,6 +302,7 @@ unsigned char readInput(char *arr[], unsigned int sz, chfemgpuInput_t * user_inp
 void initDefaultInput(chfemgpuInput_t * user_input){
   user_input->neutral_file = NULL;
   user_input->raw_file = NULL;
+  user_input->sdf_bin_file = NULL;
   user_input->hmg_direction_flag = HOMOGENIZE_ALL;
   user_input->solver_flag = 0;
   user_input->parallel_flag = 0;

@@ -10,4 +10,8 @@ void updateC_thermal_2D(hmgModel_t *model, cudapcgVar_t * T);
 void printC_thermal_2D(hmgModel_t *model, char *dest);
 void saveFields_thermal_2D(hmgModel_t *model, cudapcgVar_t * T);
 
+void assembleRHS_thermal_2D_ScalarDensityField(hmgModel_t *model);
+void updateC_thermal_2D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * T);
+void saveFields_thermal_2D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * T);
+
 #endif // FEMHMG_THERMAL_2D_H_INCLUDED

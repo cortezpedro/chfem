@@ -838,7 +838,8 @@ __device__ void Preconditioner_thermal_3D_ElemByElem_SparseQ1(
   *q = 1.0/res;
 }
 //------------------------------------------------------------------------------
-__device__ void Aprod_thermal_3D_ElemByElem_SparseQ1_N0(unsigned int i,
+template <int N>
+__device__ void Aprod_thermal_3D_ElemByElem_SparseQ1(unsigned int i,
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
@@ -852,215 +853,117 @@ __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1_N0(unsigned int i,
   // Local var to store neighbor dof indexes
   unsigned int dof;
   
-  dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);;
-  res +=   K[mat] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
-  res += K[mat+1] * v[dof];
-  dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
-  res += K[mat+2] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
-  res += K[mat+3] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
-  res += K[mat+4] * v[dof];
+  if (N==0){
+    dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);;
+    res +=   K[mat] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
+    res += K[mat+1] * v[dof];
+    dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
+    res += K[mat+2] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
+    res += K[mat+3] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
+    res += K[mat+4] * v[dof];
+  } else if (N==1){
+    dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
+    res += K[mat+5] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
+    res += K[mat+6] * v[dof];
+    dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
+    res += K[mat+7] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
+    res += K[mat+8] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
+    res += K[mat+9] * v[dof];
+  } else if (N==2){
+    dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);
+    res += K[mat+10] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
+    res += K[mat+11] * v[dof];
+    dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
+    res += K[mat+12] * v[dof];
+    dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
+    res += K[mat+13] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
+    res += K[mat+14] * v[dof];
+  } else if (N==3){
+    dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
+    res += K[mat+15] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
+    res += K[mat+16] * v[dof];
+    dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
+    res += K[mat+17] * v[dof];
+    dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
+    res += K[mat+18] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
+    res += K[mat+19] * v[dof];
+  } else if (N==4){
+    dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
+    res += K[mat+20] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
+    res += K[mat+21] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
+    res += K[mat+22] * v[dof];
+    dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
+    res += K[mat+23] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
+    res += K[mat+24] * v[dof];
+  } else if (N==5){
+    dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);
+    res += K[mat+25] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
+    res += K[mat+26] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
+    res += K[mat+27] * v[dof];
+    dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
+    res += K[mat+28] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
+    res += K[mat+29] * v[dof];
+  } else if (N==6){
+    dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);
+    res += K[mat+30] * v[dof];
+    dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
+    res += K[mat+31] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
+    res += K[mat+32] * v[dof];
+    dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
+    res += K[mat+33] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
+    res += K[mat+34] * v[dof];
+  } else if (N==7){
+    dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);
+    res += K[mat+35] * v[dof];
+    dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
+    res += K[mat+36] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
+    res += K[mat+37] * v[dof];
+    dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
+    res += K[mat+38] * v[dof];
+    dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
+    res += K[mat+39] * v[dof];
+  }
 
   *q = res;
 }
-//------------------------------------------------------------------------------
-__device__ void Aprod_thermal_3D_ElemByElem_SparseQ1_N1(unsigned int i,
-    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-      cudapcgVar_t *K,
-    #endif
-    cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q){
-  // Local vars to store result
-  cudapcgVar_t res=0.0;
-  // Local var to store index in local matrix
-  unsigned int mat = matkey*40;
-  // Get row and col ids
-  int row = (i+1)%rows, col = (i%(rows*cols))/rows, layer = i/(rows*cols);
-  // Local var to store neighbor dof indexes
-  unsigned int dof;
-  
-  dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
-  res += K[mat+5] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
-  res += K[mat+6] * v[dof];
-  dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
-  res += K[mat+7] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
-  res += K[mat+8] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
-  res += K[mat+9] * v[dof];
-
-  *q = res;
-}
-//------------------------------------------------------------------------------
-__device__ void Aprod_thermal_3D_ElemByElem_SparseQ1_N2(unsigned int i,
-    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-      cudapcgVar_t *K,
-    #endif
-    cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q){
-  // Local vars to store result
-  cudapcgVar_t res=0.0;
-  // Local var to store index in local matrix
-  unsigned int mat = matkey*40;
-  // Get row and col ids
-  int row = (i+1)%rows, col = (i%(rows*cols))/rows, layer = i/(rows*cols);
-  // Local var to store neighbor dof indexes
-  unsigned int dof;
-  
-  dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);
-  res += K[mat+10] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
-  res += K[mat+11] * v[dof];
-  dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
-  res += K[mat+12] * v[dof];
-  dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
-  res += K[mat+13] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
-  res += K[mat+14] * v[dof];
-
-  *q = res;
-}
-//------------------------------------------------------------------------------
-__device__ void Aprod_thermal_3D_ElemByElem_SparseQ1_N3(unsigned int i,
-    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-      cudapcgVar_t *K,
-    #endif
-    cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q){
-  // Local vars to store result
-  cudapcgVar_t res=0.0;
-  // Local var to store index in local matrix
-  unsigned int mat = matkey*40;
-  // Get row and col ids
-  int row = (i+1)%rows, col = (i%(rows*cols))/rows, layer = i/(rows*cols);
-  // Local var to store neighbor dof indexes
-  unsigned int dof;
-  
-  dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
-  res += K[mat+15] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
-  res += K[mat+16] * v[dof];
-  dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
-  res += K[mat+17] * v[dof];
-  dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
-  res += K[mat+18] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
-  res += K[mat+19] * v[dof];
-
-  *q = res;
-}
-//------------------------------------------------------------------------------
-__device__ void Aprod_thermal_3D_ElemByElem_SparseQ1_N4(unsigned int i,
-    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-      cudapcgVar_t *K,
-    #endif
-    cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q){
-  // Local vars to store result
-  cudapcgVar_t res=0.0;
-  // Local var to store index in local matrix
-  unsigned int mat = matkey*40;
-  // Get row and col ids
-  int row = (i+1)%rows, col = (i%(rows*cols))/rows, layer = i/(rows*cols);
-  // Local var to store neighbor dof indexes
-  unsigned int dof;
-  
-  dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
-  res += K[mat+20] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
-  res += K[mat+21] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
-  res += K[mat+22] * v[dof];
-  dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
-  res += K[mat+23] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
-  res += K[mat+24] * v[dof];
-
-  *q = res;
-}
-//------------------------------------------------------------------------------
-__device__ void Aprod_thermal_3D_ElemByElem_SparseQ1_N5(unsigned int i,
-    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-      cudapcgVar_t *K,
-    #endif
-    cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q){
-  // Local vars to store result
-  cudapcgVar_t res=0.0;
-  // Local var to store index in local matrix
-  unsigned int mat = matkey*40;
-  // Get row and col ids
-  int row = (i+1)%rows, col = (i%(rows*cols))/rows, layer = i/(rows*cols);
-  // Local var to store neighbor dof indexes
-  unsigned int dof;
-  
-  dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);
-  res += K[mat+25] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
-  res += K[mat+26] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
-  res += K[mat+27] * v[dof];
-  dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
-  res += K[mat+28] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
-  res += K[mat+29] * v[dof];
-
-  *q = res;
-}
-//------------------------------------------------------------------------------
-__device__ void Aprod_thermal_3D_ElemByElem_SparseQ1_N6(unsigned int i,
-    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-      cudapcgVar_t *K,
-    #endif
-    cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q){
-  // Local vars to store result
-  cudapcgVar_t res=0.0;
-  // Local var to store index in local matrix
-  unsigned int mat = matkey*40;
-  // Get row and col ids
-  int row = (i+1)%rows, col = (i%(rows*cols))/rows, layer = i/(rows*cols);
-  // Local var to store neighbor dof indexes
-  unsigned int dof;
-  
-  dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);
-  res += K[mat+30] * v[dof];
-  dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
-  res += K[mat+31] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer,rows,cols,layers);
-  res += K[mat+32] * v[dof];
-  dof = PERIODICNUM_3D(row,col,layer+1,rows,cols,layers);
-  res += K[mat+33] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers);
-  res += K[mat+34] * v[dof];
-
-  *q = res;
-}
-//------------------------------------------------------------------------------
-__device__ void Aprod_thermal_3D_ElemByElem_SparseQ1_N7(unsigned int i,
-    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
-      cudapcgVar_t *K,
-    #endif
-    cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q){
-  // Local vars to store result
-  cudapcgVar_t res=0.0;
-  // Local var to store index in local matrix
-  unsigned int mat = matkey*40;
-  // Get row and col ids
-  int row = (i+1)%rows, col = (i%(rows*cols))/rows, layer = i/(rows*cols);
-  // Local var to store neighbor dof indexes
-  unsigned int dof;
-  
-  dof = PERIODICNUM_3D(row,col,layer,rows,cols,layers);
-  res += K[mat+35] * v[dof];
-  dof = PERIODICNUM_3D(row,col+1,layer,rows,cols,layers);
-  res += K[mat+36] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col+1,layer,rows,cols,layers);
-  res += K[mat+37] * v[dof];
-  dof = PERIODICNUM_3D(row,col+1,layer+1,rows,cols,layers);
-  res += K[mat+38] * v[dof];
-  dof = PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers);
-  res += K[mat+39] * v[dof];
-
-  *q = res;
-}
+#if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<0>(unsigned int i, cudapcgVar_t * K, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<1>(unsigned int i, cudapcgVar_t * K, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<2>(unsigned int i, cudapcgVar_t * K, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<3>(unsigned int i, cudapcgVar_t * K, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<4>(unsigned int i, cudapcgVar_t * K, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<5>(unsigned int i, cudapcgVar_t * K, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<6>(unsigned int i, cudapcgVar_t * K, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<7>(unsigned int i, cudapcgVar_t * K, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+#else
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<0>(unsigned int i, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<1>(unsigned int i, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<2>(unsigned int i, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<3>(unsigned int i, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<4>(unsigned int i, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<5>(unsigned int i, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<6>(unsigned int i, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+template __device__ void Aprod_thermal_3D_ElemByElem_SparseQ1<7>(unsigned int i, cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q);
+#endif
 //------------------------------------------------------------------------------
 __device__ void Preconditioner_elastic_2D_ElemByElem(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
@@ -1178,6 +1081,111 @@ __device__ void Aprod_elastic_3D_ElemByElem(unsigned int i, unsigned int n,
 
 /*
   ATTENTION: NO EBE FOR FLUIDS
+*/
+
+//---------------------------------
+///////////////////////////////////
+////// SCALAR DENSITY FIELDS //////
+////////// ELEM-BY-ELEM ///////////
+///////////////////////////////////
+//---------------------------------
+
+//------------------------------------------------------------------------------
+__device__ void Preconditioner_thermal_2D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *conductivities, cudapcgVar_t *q){
+  // Local var to store result
+  cudapcgVar_t res=0.0;
+
+  #pragma unroll
+  for (int e=0; e<4; e++){
+    res += conductivities[e]*K[e*5];
+  }
+
+  *q = 1.0/res;
+}
+//------------------------------------------------------------------------------
+__device__ void Preconditioner_thermal_3D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *conductivities, cudapcgVar_t *q){
+  // Local var to store result
+  cudapcgVar_t res=0.0;
+
+  #pragma unroll
+  for (int e=0; e<8; e++){
+    res += conductivities[e]*K[e*9];
+  }
+
+  *q = 1.0/res;
+}
+//------------------------------------------------------------------------------
+__device__ void Preconditioner_thermal_3D_ElemByElem_ScalarDensityField_SparseQ1(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *conductivities, cudapcgVar_t *q){
+  // Local var to store result
+  cudapcgVar_t res=0.0;
+
+  #pragma unroll
+  for (int e=0; e<8; e++){
+     res += conductivities[e]*K[0]; // using always first diagonal term
+  }
+
+  *q = 1.0/res;
+}
+//------------------------------------------------------------------------------
+__device__ void Preconditioner_elastic_2D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgMap_t *materials, cudapcgVar_t *elasticmoduli, cudapcgVar_t *q){
+  // Local var to store result
+  cudapcgVar_t res_x=0.0, res_y=0.0;
+  // Local var to store indexes in local matrix
+  unsigned int mat;
+
+  #pragma unroll
+  for (int e=0; e<4; e++){
+    mat = materials[e]*64+(e*18);
+    res_x += elasticmoduli[e]*K[mat];
+    res_y += elasticmoduli[e]*K[mat+9];
+  }
+
+  *q     = 1.0/res_x;
+  *(++q) = 1.0/res_y;
+}
+//------------------------------------------------------------------------------
+__device__ void Preconditioner_elastic_3D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgMap_t *materials, cudapcgVar_t *elasticmoduli, cudapcgVar_t *q){
+  // Local var to store result
+  cudapcgVar_t res_x=0.0, res_y=0.0, res_z=0.0;
+  // Local var to store indexes in local matrix
+  unsigned int mat;
+
+  #pragma unroll
+  for (int e=0; e<8; e++){
+    mat = ((unsigned int)materials[e])*576+(e*75);
+    res_x += elasticmoduli[e]*K[mat];
+    res_y += elasticmoduli[e]*K[mat+25];
+    res_z += elasticmoduli[e]*K[mat+50];
+  }
+
+  *q     = 1.0/res_x;
+  *(++q) = 1.0/res_y;
+  *(++q) = 1.0/res_z;
+}
+//------------------------------------------------------------------------------
+
+/*
+  ATTENTION: NO SCALAR DENSITY FIELD FOR FLUIDS
 */
 
 //--------------------------------------------------------------------
@@ -1379,6 +1387,88 @@ __global__ void kernel_Aprod_thermal_2D_ElemByElem(
   }
 }
 //------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 2D thermal conductivity analysis
+__global__ void kernel_applyPreConditioner_thermal_2D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    unsigned int nxy=nx*ny;
+    cudapcgVar_t densities_around_node[4] = {
+      (cudapcgVar_t)field[WALK_UP(i,ny)],
+      (cudapcgVar_t)field[WALK_LEFT(WALK_UP(i,ny),ny,nxy)],
+      (cudapcgVar_t)field[WALK_LEFT(i,ny,nxy)],
+      (cudapcgVar_t)field[i]
+    };
+
+    #pragma unroll
+    for (int j=0; j<4; j++) { densities_around_node[j] *= (1.0/65535.0)*(fmax-fmin); densities_around_node[j] += fmin; }
+
+    cudapcgVar_t q;
+    Preconditioner_thermal_2D_ElemByElem_ScalarDensityField(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      &densities_around_node[0], &q);
+    
+    res[i] = v1[i]*q + scl*v2[i];
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 2D thermal analysis
+__global__ void kernel_Aprod_thermal_2D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+
+    unsigned int dof, nxy=nx*ny;
+    scl *= (cudapcgVar_t)(fmin + (fmax-fmin)*field[i]*(1.0/65535.0));
+    cudapcgVar_t res;
+
+    Aprod_thermal_2D_ElemByElem( i, 0,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, &res);
+    dof = WALK_DOWN(i,ny);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_2D_ElemByElem( i, 1,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, &res);
+    dof = WALK_RIGHT(dof,ny,nxy);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_2D_ElemByElem( i, 2,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, &res);
+    dof = WALK_UP(dof,ny);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_2D_ElemByElem( i, 3,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, &res);
+    dof = i;
+    atomicAdd(&q[dof],scl*res);
+
+  }
+}
+//------------------------------------------------------------------------------
 
 //-----------------------------------------
 ///////////////////////////////////////////
@@ -1551,7 +1641,7 @@ __global__ void kernel_Aprod_thermal_3D_ElemByElem(
     cudapcgMap_t matkey = material[i];
     cudapcgVar_t res;
 
-    Aprod_thermal_3D_ElemByElem_SparseQ1_N0( i,
+    Aprod_thermal_3D_ElemByElem_SparseQ1<0>( i,
       #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
         K,
       #endif
@@ -1559,7 +1649,7 @@ __global__ void kernel_Aprod_thermal_3D_ElemByElem(
     dof = PERIODICNUM_3D(row,col,layer,ny,nx,nz);
     atomicAdd(&q[dof],scl*res);
 
-    Aprod_thermal_3D_ElemByElem_SparseQ1_N1( i,
+    Aprod_thermal_3D_ElemByElem_SparseQ1<1>( i,
       #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
         K,
       #endif
@@ -1567,7 +1657,7 @@ __global__ void kernel_Aprod_thermal_3D_ElemByElem(
     dof = PERIODICNUM_3D(row,col+1,layer,ny,nx,nz);
     atomicAdd(&q[dof],scl*res);
 
-    Aprod_thermal_3D_ElemByElem_SparseQ1_N2( i,
+    Aprod_thermal_3D_ElemByElem_SparseQ1<2>( i,
       #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
         K,
       #endif
@@ -1575,7 +1665,7 @@ __global__ void kernel_Aprod_thermal_3D_ElemByElem(
     dof = PERIODICNUM_3D(row-1,col+1,layer,ny,nx,nz);
     atomicAdd(&q[dof],scl*res);
 
-    Aprod_thermal_3D_ElemByElem_SparseQ1_N3( i,
+    Aprod_thermal_3D_ElemByElem_SparseQ1<3>( i,
       #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
         K,
       #endif
@@ -1583,7 +1673,7 @@ __global__ void kernel_Aprod_thermal_3D_ElemByElem(
     dof = i; //PERIODICNUM_3D(row-1,col,layer,ny,nx,nz);
     atomicAdd(&q[dof],scl*res);
 
-    Aprod_thermal_3D_ElemByElem_SparseQ1_N4( i,
+    Aprod_thermal_3D_ElemByElem_SparseQ1<4>( i,
       #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
         K,
       #endif
@@ -1591,7 +1681,7 @@ __global__ void kernel_Aprod_thermal_3D_ElemByElem(
     dof = PERIODICNUM_3D(row,col,layer+1,ny,nx,nz);
     atomicAdd(&q[dof],scl*res);
 
-    Aprod_thermal_3D_ElemByElem_SparseQ1_N5( i,
+    Aprod_thermal_3D_ElemByElem_SparseQ1<5>( i,
       #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
         K,
       #endif
@@ -1599,7 +1689,7 @@ __global__ void kernel_Aprod_thermal_3D_ElemByElem(
     dof = PERIODICNUM_3D(row,col+1,layer+1,ny,nx,nz);
     atomicAdd(&q[dof],scl*res);
 
-    Aprod_thermal_3D_ElemByElem_SparseQ1_N6( i,
+    Aprod_thermal_3D_ElemByElem_SparseQ1<6>( i,
       #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
         K,
       #endif
@@ -1607,11 +1697,133 @@ __global__ void kernel_Aprod_thermal_3D_ElemByElem(
     dof = PERIODICNUM_3D(row-1,col+1,layer+1,ny,nx,nz);
     atomicAdd(&q[dof],scl*res);
 
-    Aprod_thermal_3D_ElemByElem_SparseQ1_N7( i,
+    Aprod_thermal_3D_ElemByElem_SparseQ1<7>( i,
       #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
         K,
       #endif
       v, matkey, ny, nx, nz, &res);
+    dof = PERIODICNUM_3D(row-1,col,layer+1,ny,nx,nz);
+    atomicAdd(&q[dof],scl*res);
+  }
+}
+//------------------------------------------------------------------------------
+__global__ void kernel_applyPreConditioner_thermal_3D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz,  cudapcgVar_t *res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+
+    // Get row and col ids
+    int row = i%ny, col = (i%(nx*ny))/ny, layer = i/(nx*ny);
+
+    cudapcgVar_t densities_around_node[8] = {
+      (cudapcgVar_t)field[PERIODICNUM_3D(row-1,col,layer,ny,nx,nz)],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row-1,col-1,layer,ny,nx,nz)],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row,col-1,layer,ny,nx,nz)],
+      (cudapcgVar_t)field[i],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row-1,col,layer-1,ny,nx,nz)],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row-1,col-1,layer-1,ny,nx,nz)],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row,col-1,layer-1,ny,nx,nz)],
+      (cudapcgVar_t)field[WALK_NEAR(i,(nx*ny),(nx*ny*nz))]
+    };
+
+    #pragma unroll
+    for (int j=0; j<8; j++) { densities_around_node[j] *= (1.0/65535.0)*(fmax-fmin); densities_around_node[j] += fmin; }
+
+    cudapcgVar_t q;
+    Preconditioner_thermal_3D_ElemByElem_ScalarDensityField_SparseQ1(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      &densities_around_node[0], &q);
+
+    res[i] = v1[i]*q + v2[i]*scl;
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 3D thermal analysis
+__global__ void kernel_Aprod_thermal_3D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+
+    // Get row and col ids
+    int row = (i+1)%ny, col = (i%(nx*ny))/ny, layer = i/(nx*ny);
+    unsigned int dof;
+
+    scl *= (cudapcgVar_t)(fmin + (fmax-fmin)*field[i]*(1.0/65535.0));
+    cudapcgVar_t res;
+
+    Aprod_thermal_3D_ElemByElem_SparseQ1<0>( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, nz, &res);
+    dof = PERIODICNUM_3D(row,col,layer,ny,nx,nz);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_3D_ElemByElem_SparseQ1<1>( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, nz, &res);
+    dof = PERIODICNUM_3D(row,col+1,layer,ny,nx,nz);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_3D_ElemByElem_SparseQ1<2>( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, nz, &res);
+    dof = PERIODICNUM_3D(row-1,col+1,layer,ny,nx,nz);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_3D_ElemByElem_SparseQ1<3>( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, nz, &res);
+    dof = i; //PERIODICNUM_3D(row-1,col,layer,ny,nx,nz);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_3D_ElemByElem_SparseQ1<4>( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, nz, &res);
+    dof = PERIODICNUM_3D(row,col,layer+1,ny,nx,nz);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_3D_ElemByElem_SparseQ1<5>( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, nz, &res);
+    dof = PERIODICNUM_3D(row,col+1,layer+1,ny,nx,nz);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_3D_ElemByElem_SparseQ1<6>( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, nz, &res);
+    dof = PERIODICNUM_3D(row-1,col+1,layer+1,ny,nx,nz);
+    atomicAdd(&q[dof],scl*res);
+
+    Aprod_thermal_3D_ElemByElem_SparseQ1<7>( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, 0, ny, nx, nz, &res);
     dof = PERIODICNUM_3D(row-1,col,layer+1,ny,nx,nz);
     atomicAdd(&q[dof],scl*res);
   }
@@ -1779,6 +1991,101 @@ __global__ void kernel_Aprod_elastic_2D_ElemByElem(
     unsigned int dof, nxy=nx*ny;
 
     cudapcgMap_t matkey = material[i];
+
+    cudapcgVar_t res[2];
+
+    Aprod_elastic_2D_ElemByElem( i, 0,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, &res[0]);
+    dof = WALK_DOWN(i,ny);
+    atomicAdd(  &q[2*dof],scl*res[0]);
+    atomicAdd(&q[2*dof+1],scl*res[1]);
+
+    Aprod_elastic_2D_ElemByElem( i, 1,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, &res[0]);
+    dof = WALK_RIGHT(dof,ny,nxy);
+    atomicAdd(  &q[2*dof],scl*res[0]);
+    atomicAdd(&q[2*dof+1],scl*res[1]);
+
+    Aprod_elastic_2D_ElemByElem( i, 2,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, &res[0]);
+    dof = WALK_UP(dof,ny);
+    atomicAdd(  &q[2*dof],scl*res[0]);
+    atomicAdd(&q[2*dof+1],scl*res[1]);
+
+    Aprod_elastic_2D_ElemByElem( i, 3,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, &res[0]);
+    dof = i;
+    atomicAdd(  &q[2*dof],scl*res[0]);
+    atomicAdd(&q[2*dof+1],scl*res[1]);
+  }
+}
+//------------------------------------------------------------------------------
+__global__ void kernel_applyPreConditioner_elastic_2D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){ 
+    unsigned int nxy=nx*ny;
+    cudapcgMap_t materials_around_node[4] = {
+      material[WALK_UP(i,ny)],
+      material[WALK_LEFT(WALK_UP(i,ny),ny,nxy)],
+      material[WALK_LEFT(i,ny,nxy)],
+      material[i]
+    };
+
+    cudapcgVar_t densities_around_node[4] = {
+      (cudapcgVar_t)field[WALK_UP(i,ny)],
+      (cudapcgVar_t)field[WALK_LEFT(WALK_UP(i,ny),ny,nxy)],
+      (cudapcgVar_t)field[WALK_LEFT(i,ny,nxy)],
+      (cudapcgVar_t)field[i]
+    };
+
+    #pragma unroll
+    for (int j=0; j<4; j++) { densities_around_node[j] *= (1.0/65535.0)*(fmax-fmin); densities_around_node[j] += fmin; }
+
+    cudapcgVar_t q[2];
+    Preconditioner_elastic_2D_ElemByElem_ScalarDensityField(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      &materials_around_node[0], &densities_around_node[0], &q[0]);
+
+    res[2*i]   =   v1[2*i]*q[0] +   scl*v2[2*i];
+    res[2*i+1] = v1[2*i+1]*q[0] + scl*v2[2*i+1];
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 2D elasticity analysis
+__global__ void kernel_Aprod_elastic_2D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+
+    unsigned int dof, nxy=nx*ny;
+
+    cudapcgMap_t matkey = material[i];
+    scl *= (cudapcgVar_t)(fmin + (fmax-fmin)*field[i]*(1.0/65535.0));
 
     cudapcgVar_t res[2];
 
@@ -2000,6 +2307,158 @@ __global__ void kernel_Aprod_elastic_3D_ElemByElem(
     unsigned int dof;
 
     cudapcgMap_t matkey = material[i];
+
+    cudapcgVar_t res[3];
+
+    Aprod_elastic_3D_ElemByElem( i, 0,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res[0]);
+    dof = PERIODICNUM_3D(row,col,layer,ny,nx,nz);
+    atomicAdd(  &q[3*dof],scl*res[0]);
+    atomicAdd(&q[3*dof+1],scl*res[1]);
+    atomicAdd(&q[3*dof+2],scl*res[2]);
+
+    Aprod_elastic_3D_ElemByElem( i, 1,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res[0]);
+    dof = PERIODICNUM_3D(row,col+1,layer,ny,nx,nz);
+    atomicAdd(  &q[3*dof],scl*res[0]);
+    atomicAdd(&q[3*dof+1],scl*res[1]);
+    atomicAdd(&q[3*dof+2],scl*res[2]);
+
+    Aprod_elastic_3D_ElemByElem( i, 2,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res[0]);
+    dof = PERIODICNUM_3D(row-1,col+1,layer,ny,nx,nz);
+    atomicAdd(  &q[3*dof],scl*res[0]);
+    atomicAdd(&q[3*dof+1],scl*res[1]);
+    atomicAdd(&q[3*dof+2],scl*res[2]);
+
+    Aprod_elastic_3D_ElemByElem( i, 3,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res[0]);
+    dof = i; //PERIODICNUM_3D(row-1,col,layer,ny,nx,nz);
+    atomicAdd(  &q[3*dof],scl*res[0]);
+    atomicAdd(&q[3*dof+1],scl*res[1]);
+    atomicAdd(&q[3*dof+2],scl*res[2]);
+
+    Aprod_elastic_3D_ElemByElem( i, 4,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res[0]);
+    dof = PERIODICNUM_3D(row,col,layer+1,ny,nx,nz);
+    atomicAdd(  &q[3*dof],scl*res[0]);
+    atomicAdd(&q[3*dof+1],scl*res[1]);
+    atomicAdd(&q[3*dof+2],scl*res[2]);
+
+    Aprod_elastic_3D_ElemByElem( i, 5,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res[0]);
+    dof = PERIODICNUM_3D(row,col+1,layer+1,ny,nx,nz);
+    atomicAdd(  &q[3*dof],scl*res[0]);
+    atomicAdd(&q[3*dof+1],scl*res[1]);
+    atomicAdd(&q[3*dof+2],scl*res[2]);
+
+    Aprod_elastic_3D_ElemByElem( i, 6,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res[0]);
+    dof = PERIODICNUM_3D(row-1,col+1,layer+1,ny,nx,nz);
+    atomicAdd(  &q[3*dof],scl*res[0]);
+    atomicAdd(&q[3*dof+1],scl*res[1]);
+    atomicAdd(&q[3*dof+2],scl*res[2]);
+
+    Aprod_elastic_3D_ElemByElem( i, 7,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res[0]);
+    dof = PERIODICNUM_3D(row-1,col,layer+1,ny,nx,nz);
+    atomicAdd(  &q[3*dof],scl*res[0]);
+    atomicAdd(&q[3*dof+1],scl*res[1]);
+    atomicAdd(&q[3*dof+2],scl*res[2]);
+  }
+}
+//------------------------------------------------------------------------------
+__global__ void kernel_applyPreConditioner_elastic_3D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){    
+    // Get row and col ids
+    int row = i%ny, col = (i%(nx*ny))/ny, layer = i/(nx*ny);
+
+    cudapcgMap_t materials_around_node[8] = {
+      material[PERIODICNUM_3D(row-1,col,layer,ny,nx,nz)],
+      material[PERIODICNUM_3D(row-1,col-1,layer,ny,nx,nz)],
+      material[PERIODICNUM_3D(row,col-1,layer,ny,nx,nz)],
+      material[i],
+      material[PERIODICNUM_3D(row-1,col,layer-1,ny,nx,nz)],
+      material[PERIODICNUM_3D(row-1,col-1,layer-1,ny,nx,nz)],
+      material[PERIODICNUM_3D(row,col-1,layer-1,ny,nx,nz)],
+      material[WALK_NEAR(i,(nx*ny),(nx*ny*nz))]
+    };
+
+    cudapcgVar_t densities_around_node[8] = {
+      (cudapcgVar_t)field[PERIODICNUM_3D(row-1,col,layer,ny,nx,nz)],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row-1,col-1,layer,ny,nx,nz)],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row,col-1,layer,ny,nx,nz)],
+      (cudapcgVar_t)field[i],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row-1,col,layer-1,ny,nx,nz)],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row-1,col-1,layer-1,ny,nx,nz)],
+      (cudapcgVar_t)field[PERIODICNUM_3D(row,col-1,layer-1,ny,nx,nz)],
+      (cudapcgVar_t)field[WALK_NEAR(i,(nx*ny),(nx*ny*nz))]
+    };
+
+    #pragma unroll
+    for (int j=0; j<8; j++) { densities_around_node[j] *= (1.0/65535.0)*(fmax-fmin); densities_around_node[j] += fmin; }
+    
+    cudapcgVar_t q[3];
+    Preconditioner_elastic_3D_ElemByElem_ScalarDensityField(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      &materials_around_node[0], &densities_around_node[0], &q[0]);
+
+    res[3*i]   =   v1[3*i]*q[0] +   scl*v2[3*i];
+    res[3*i+1] = v1[3*i+1]*q[1] + scl*v2[3*i+1];
+    res[3*i+2] = v1[3*i+2]*q[2] + scl*v2[3*i+2];
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 3D elasticity analysis
+__global__ void kernel_Aprod_elastic_3D_ElemByElem_ScalarDensityField(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+
+    // Get row and col ids
+    int row = (i+1)%ny, col = (i%(nx*ny))/ny, layer = i/(nx*ny);
+    unsigned int dof;
+
+    cudapcgMap_t matkey = material[i];
+    scl *= (cudapcgVar_t)(fmin + (fmax-fmin)*field[i]*(1.0/65535.0));
 
     cudapcgVar_t res[3];
 

@@ -11,4 +11,8 @@ void updateC_elastic_2D(hmgModel_t *model, cudapcgVar_t * D);
 void printC_elastic_2D(hmgModel_t *model, char *dest);
 void saveFields_elastic_2D(hmgModel_t *model, cudapcgVar_t * D);
 
+void assembleRHS_elastic_2D_ScalarDensityField(hmgModel_t *model);
+void updateC_elastic_2D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D);
+void saveFields_elastic_2D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D);
+
 #endif // FEMHMG_ELASTIC_2D_H_INCLUDED

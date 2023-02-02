@@ -5,16 +5,16 @@
 // Predefined num of threads on each block (controlled in compiler)
 #ifdef CUDAPCG_BLOCKDIM_1024
   #define THREADS_PER_BLOCK 1024
+#elif CUDAPCG_BLOCKDIM_512
+  #define THREADS_PER_BLOCK 512
 #elif CUCUDAPCG_BLOCKDIM_256
   #define THREADS_PER_BLOCK 256
-#elif CUDAPCG_BLOCKDIM_128
-  #define THREADS_PER_BLOCK 128
 #elif CUDAPCG_BLOCKDIM_64
   #define THREADS_PER_BLOCK 64
 #elif CUDAPCG_BLOCKDIM_32
   #define THREADS_PER_BLOCK 32
-#else //default is 512
-  #define THREADS_PER_BLOCK 512 // by choice. multiple of 32, up to 1024
+#else //default is 128
+  #define THREADS_PER_BLOCK 128 // by choice. multiple of 32, up to 1024
 #endif
 
 //---------------------------------

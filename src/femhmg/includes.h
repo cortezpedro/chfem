@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <omp.h>
 #include "cudapcg/cudapcg.h"
 #include "report/report.h"
@@ -17,6 +18,8 @@
 #define DEFAULT_NUM_OF_STREAMS 8
 
 #define MAX(A,B) (B>A?B:A)
+#define VOID_AS_FLOAT(p,id) (((float *)p)[id])
+#define VOID_AS_DOUBLE(p,id) (((double *)p)[id])
 
 #define HMG_THERMAL 0
 #define HMG_ELASTIC 1
@@ -40,9 +43,12 @@
 #define HOMOGENIZE_XY 5
 #define HOMOGENIZE_ALL 6
 
+#define HMG_FLOAT32 0
+#define HMG_FLOAT64 1
+
 typedef double var;
-typedef unsigned char logical;    // 8bit variables
-typedef unsigned short int hmgFlag_t;
+typedef uint8_t logical;
+typedef uint16_t hmgFlag_t;
 
 typedef struct _hmgmodel{
 
@@ -50,6 +56,7 @@ typedef struct _hmgmodel{
     char *neutralFile;
     char *neutralFile_noExt;
     char *imageFile;
+    char *sdfFile;
 
     report_t *report;
     reportFlag_t m_report_flag;
@@ -63,6 +70,7 @@ typedef struct _hmgmodel{
     hmgFlag_t m_dim_flag;
     hmgFlag_t m_analysis_flag;
     hmgFlag_t m_hmg_flag;
+    hmgFlag_t m_scalar_field_data_type_flag;
     cudapcgFlag_t m_pcg_flag;
     logical m_hmg_flag_was_set;
     logical m_using_x0_flag;
@@ -79,9 +87,13 @@ typedef struct _hmgmodel{
     var props[PROPS_ARRAY_SIZE];
     unsigned char props_keys[MAX_COLORNUM]; // data is 8bit
 
+    double density_max;
+    double density_min;
+
     unsigned int * node_dof_map;
     cudapcgMap_t * elem_material_map;
     cudapcgMap_t * dof_material_map;
+    parametricScalarField_t * density_map;
     cudapcgIdMap_t  * dof_id_map; // used for permeability analysis
     cudapcgFlag_t * dof_fluid_map; // used for permeability analysis
     cudapcgVar_t * Mtxs;

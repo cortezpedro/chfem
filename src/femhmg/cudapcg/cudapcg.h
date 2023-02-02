@@ -55,6 +55,7 @@ extern "C" {
   cudapcgFlag_t cudapcgSetRHS(cudapcgVar_t * RHS);
   cudapcgFlag_t cudapcgSetX0(cudapcgVar_t * x0, cudapcgFlag_t mustInterpolate);
   cudapcgFlag_t cudapcgSetImage(cudapcgMap_t *img);
+  cudapcgFlag_t cudapcgSetParametricDensityField(parametricScalarField_t *field, double fmin, double fmax);
   cudapcgFlag_t cudapcgSetPoreMap(cudapcgFlag_t *pores);
   cudapcgFlag_t cudapcgSetPeriodic2DOFMap(cudapcgIdMap_t *vars);
   cudapcgFlag_t cudapcgSetDOF2PeriodicMap(cudapcgIdMap_t *nodes);
