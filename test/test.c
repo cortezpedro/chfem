@@ -1,7 +1,7 @@
 #include "../src/includes.h"
 #include <math.h>
 
-#define NUM_TESTS 10
+#define NUM_TESTS 14
 #define TOL 0.0001
 #define ZERO 0.0000000000000001
 
@@ -21,13 +21,17 @@ double DIFF[NUM_TESTS];
 char NF_FILES[NUM_TESTS][1024] = {
   "input/2D/thermal/100x100.nf",
   "input/2D/thermal/100x100.nf",
+  "input/2D/thermal/100x100_bin.nf",
   "input/2D/elastic/100x100.nf",
   "input/2D/elastic/100x100.nf",
+  "input/2D/elastic/100x100_bin.nf",
   "input/2D/fluid/100x100.nf",
   "input/3D/thermal/ggg40_100.nf",
   "input/3D/thermal/ggg40_100.nf",
+  "input/3D/thermal/ggg40_100_bin.nf",
   "input/3D/elastic/ggg40_100.nf",
   "input/3D/elastic/ggg40_100.nf",
+  "input/3D/elastic/ggg40_100_bin.nf",
   "input/3D/fluid/fibers_100x100x10.nf"
 };
 char RAW_FILES[NUM_TESTS][1024] = {
@@ -36,20 +40,44 @@ char RAW_FILES[NUM_TESTS][1024] = {
   "input/2D/100x100.raw",
   "input/2D/100x100.raw",
   "input/2D/100x100.raw",
+  "input/2D/100x100.raw",
+  "input/2D/100x100.raw",
+  "input/3D/ggg40_100.raw",
+  "input/3D/ggg40_100.raw",
   "input/3D/ggg40_100.raw",
   "input/3D/ggg40_100.raw",
   "input/3D/ggg40_100.raw",
   "input/3D/ggg40_100.raw",
   "input/3D/fibers_100x100x10.raw"
 };
+char SDF_FILES[NUM_TESTS][1024] = {
+  "",
+  "",
+  "input/2D/100x100.bin",
+  "",
+  "",
+  "input/2D/100x100.bin",
+  "",
+  "",
+  "",
+  "input/3D/ggg40_100_thermal.bin",
+  "",
+  "",
+  "input/3D/ggg40_100_elastic.bin",
+  ""
+};
 char RES_FILES[NUM_TESTS][1024] = {
   "input/2D/thermal/100x100_result.bin",
   "input/2D/thermal/100x100_result.bin",
+  "input/2D/thermal/100x100_result.bin",
+  "input/2D/elastic/100x100_result.bin",
   "input/2D/elastic/100x100_result.bin",
   "input/2D/elastic/100x100_result.bin",
   "input/2D/fluid/100x100_result.bin",
   "input/3D/thermal/ggg40_100_result.bin",
   "input/3D/thermal/ggg40_100_result.bin",
+  "input/3D/thermal/ggg40_100_result.bin",
+  "input/3D/elastic/ggg40_100_result.bin",
   "input/3D/elastic/ggg40_100_result.bin",
   "input/3D/elastic/ggg40_100_result.bin",
   "input/3D/fluid/fibers_100x100x10_result.bin"
@@ -57,17 +85,21 @@ char RES_FILES[NUM_TESTS][1024] = {
 unsigned int RES_SIZES[NUM_TESTS] = {
   4,
   4,
+  4,
+  9,
   9,
   9,
   4,
   9,
   9,
+  9,
+  36,
   36,
   36,
   9
 };
-//                        nf  raw  -e -b bin -m txt xo xi bin
-#define DEFAULT_IO_FLAGS NULL,NULL,0,0,0,NULL,0,NULL,0,0,NULL
+//                        nf  raw  sdf -e -b bin -m txt xo xi bin
+#define DEFAULT_IO_FLAGS NULL,NULL,NULL,0,0,0,NULL,0,NULL,0,0,NULL
 input_t INPUTS[NUM_TESTS] = {
   { 
     DEFAULT_IO_FLAGS,
@@ -93,7 +125,25 @@ input_t INPUTS[NUM_TESTS] = {
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_ALL,
     CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_EBE,
+    1
+  },
+  { 
+    DEFAULT_IO_FLAGS,
+    CUDAPCG_L2_NORM,
+    CUDAPCG_POREMAP_NUM,
+    HOMOGENIZE_ALL,
+    CUDAPCG_DEFAULT_SOLVER,
     CUDAPCG_NBN,
+    1
+  },
+  { 
+    DEFAULT_IO_FLAGS,
+    CUDAPCG_L2_NORM,
+    CUDAPCG_POREMAP_NUM,
+    HOMOGENIZE_ALL,
+    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_EBE,
     1
   },
   { 
@@ -136,9 +186,27 @@ input_t INPUTS[NUM_TESTS] = {
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
+    HOMOGENIZE_X,
+    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_EBE,
+    1
+  },
+  { 
+    DEFAULT_IO_FLAGS,
+    CUDAPCG_L2_NORM,
+    CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_Y,
     CUDAPCG_DEFAULT_SOLVER,
     CUDAPCG_NBN,
+    1
+  },
+  { 
+    DEFAULT_IO_FLAGS,
+    CUDAPCG_L2_NORM,
+    CUDAPCG_POREMAP_NUM,
+    HOMOGENIZE_Y,
+    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_EBE,
     1
   },
   { 
@@ -172,6 +240,7 @@ int main(void){
     
     INPUTS[i].neutral_file = &( NF_FILES[i][0]);
     INPUTS[i].raw_file     = &(RAW_FILES[i][0]);
+    INPUTS[i].sdf_bin_file = SDF_FILES[i][0]=='\0' ? NULL : &(SDF_FILES[i][0]);
   
     res.sz = RES_SIZES[i];
     res.bin_file = &(RES_FILES[i][0]);
@@ -207,7 +276,7 @@ int main(void){
 int runTest(input_t *input, result_t *res){
 
   // Initialize FEM model for homogenization
-  if (!hmgInit(input->neutral_file,input->raw_file)){ res->max_diff=INFINITY; return 0; }
+  if (!hmgInit(input->neutral_file,input->raw_file,input->sdf_bin_file)){ res->max_diff=INFINITY; return 0; }
 
   // Set parallel strategy flag
   hmgSetParallelStrategyFlag(input->parallel_flag);
