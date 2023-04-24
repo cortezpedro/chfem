@@ -260,7 +260,9 @@ cudapcgFlag_t solve_minres(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     solver->mean_time_per_iteration = mean_time*0.001; // value is in ms
 
     #ifdef CUDAPCG_TRACK_STOPCRIT
-    FILE * file = fopen("stopcrit_metrics.bin","wb");
+    char filename_buffer[2048];
+    sprintf(filename_buffer,"%s_stopcrit_metrics_%lu.bin",model->name,solver->count);
+    FILE * file = fopen(filename_buffer,"wb");
     if (file)
       fwrite(stopcrit_metrics,sizeof(double)*(solver->iteration+1),1,file);
     fclose(file);
