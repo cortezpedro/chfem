@@ -27,10 +27,10 @@
 
 #include "cudapcg.h"
 #include "error_handling.h"
-#include "kernels/cudapcg_kernels_wrappers.h"
-#include "solvers/cudapcg_default.h"
-#include "solvers/cudapcg_nojacobi.h"
-#include "solvers/cudapcg_minres.h"
+#include "kernels/wrappers.h"
+#include "solvers/pcg.h"
+#include "solvers/cg.h"
+#include "solvers/minres.h"
 
 //---------------------------------
 ///////////////////////////////////

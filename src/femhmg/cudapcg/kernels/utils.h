@@ -62,7 +62,7 @@ __device__ double atomicAdd(double *at, double x){
 /*
     These macros are used in the Aprod kernels
     to navigate the structured grid, considering
-    the adopted DOF numbering system (ANDREASEN).
+    the adopted DOF numbering system (line major).
     
     Obs.: WALK_RIGHT and WALK_LEFT work with local
           indexes within a layer (3D).
@@ -76,7 +76,7 @@ __device__ double atomicAdd(double *at, double x){
 
 /*
     These macros reproduce the adopted DOF numbering
-    system (ANDREASEN), from [row,col,layer] indexes.
+    system (line major), from [row,col,layer] indexes.
 */
 #define PERIODICNUM_2D(row,col,nrows,ncols) ((row+nrows)%nrows+((col+ncols)%ncols)*nrows)
 #define PERIODICNUM_3D(row,col,layer,nrows,ncols,nlayers) ((row+nrows)%nrows+((col+ncols)%ncols)*nrows+((layer+nlayers)%nlayers)*nrows*ncols)

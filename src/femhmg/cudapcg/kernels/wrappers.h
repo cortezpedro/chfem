@@ -33,7 +33,12 @@
 #ifndef CUDAPCG_KERNELS_WRAPPERS_H_INCLUDED
 #define CUDAPCG_KERNELS_WRAPPERS_H_INCLUDED
 
-// Auxiliary API functions
+//---------------------------
+/////////////////////////////
+///// MEMORY MANAGEMENT /////
+/////////////////////////////
+//---------------------------
+
 void allocDotProdArrs(unsigned int dim);
 void freeDotProdArrs();
 
@@ -41,38 +46,46 @@ void allocLocalK(unsigned long int size);
 void setLocalK(cudapcgVar_t * lclK, unsigned long int size);
 void freeLocalK();
 
-//-------------------------------
-/////////////////////////////////
-//////////// GENERAL ////////////
-//////////// PURPOSE ////////////
-/////////////////////////////////
-//-------------------------------
-
-void arrcpy(cudapcgVar_t * res, cudapcgVar_t * v, unsigned int dim);
-void zeros(cudapcgVar_t * v, unsigned int dim);
-cudapcgVar_t absmax(cudapcgVar_t *v, unsigned int dim);
-double reduce(cudapcgVar_t *v, unsigned int dim);
-double absreduce(cudapcgVar_t *v, unsigned int dim);
-double dotprod(cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim);
-void termbytermmul(cudapcgVar_t * v1, cudapcgVar_t * v2, unsigned int dim, cudapcgVar_t * res);
-void termbytermdiv(cudapcgVar_t * v1, cudapcgVar_t * v2, unsigned int dim, cudapcgVar_t * res);
-void termbyterminv(cudapcgVar_t * v, unsigned int dim);
-void saxpy(cudapcgVar_t * y, cudapcgVar_t * x, cudapcgVar_t a, unsigned int dim, cudapcgVar_t * res);
-void saxpy_iny(cudapcgVar_t * y, cudapcgVar_t * x, cudapcgVar_t a, unsigned int dim);
-void interpl2(cudapcgVar_t *res, cudapcgVar_t *v, unsigned int dim_x, unsigned int dim_y, unsigned int dim_z, unsigned int stride);
-
-
-//-------------------------------
-/////////////////////////////////
-////////// MATRIX-FREE //////////
-//////////// KERNELS ////////////
-/////////////////////////////////
-//-------------------------------
-
 // By default, no preconditioner is allocated
 // These functions are only called if specifically requested.
 void allocPreConditioner(cudapcgModel_t *m);
 void freePreConditioner();
+
+//---------------------------
+/////////////////////////////
+///// VECTOR OPERATIONS /////
+/////////////////////////////
+//---------------------------
+
+void zeros(cudapcgVar_t * v, unsigned int dim);                                                        // v = 0
+void arrcpy(cudapcgVar_t * v, unsigned int dim, cudapcgVar_t * res);                                   // res = v
+cudapcgVar_t max(cudapcgVar_t *v, unsigned int dim);                                                   // max(v)
+cudapcgVar_t absmax(cudapcgVar_t *v, unsigned int dim);                                                // max(abs(v))
+double reduce(cudapcgVar_t *v, unsigned int dim);                                                      // sum(v)
+double absreduce(cudapcgVar_t *v, unsigned int dim);                                                   // sum(abs(v))
+double dotprod(cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim);                                  // dot(v1,v2)
+void termbytermmul(cudapcgVar_t * v1, cudapcgVar_t * v2, unsigned int dim, cudapcgVar_t * res);        // res = v1 .* v2
+void termbytermdiv(cudapcgVar_t * v1, cudapcgVar_t * v2, unsigned int dim, cudapcgVar_t * res);        // res = v1 ./ v2
+void termbyterminv(cudapcgVar_t * v, unsigned int dim);                                                // v = 1 ./ v 
+void saxpy(cudapcgVar_t * y, cudapcgVar_t * x, cudapcgVar_t a, unsigned int dim, cudapcgVar_t * res);  // res = a*x + y
+void saxpy_iny(cudapcgVar_t * y, cudapcgVar_t * x, cudapcgVar_t a, unsigned int dim);                  // y = a*x + y
+
+//---------------------------
+/////////////////////////////
+///// IMAGE OPERATIONS //////
+/////////////////////////////
+//---------------------------
+
+// Interpolates field v from [rows/2,cols/2,layers/2] mesh to [rows,cols,layers] mesh
+// Obs.: stride => number of variables per node, i.e. scalar or vector field 
+void interpl2(cudapcgVar_t *v, unsigned int rows, unsigned int cols, unsigned int layers, unsigned int stride, cudapcgVar_t *res);
+
+//---------------------------
+/////////////////////////////
+/// MATRIXFREE OPERATIONS ///
+/////////////////////////////
+//---------------------------
+
 void assemblePreConditioner_thermal_2D(cudapcgModel_t *m);
 void assemblePreConditioner_thermal_3D(cudapcgModel_t *m);
 void assemblePreConditioner_elastic_2D(cudapcgModel_t *m);

@@ -28,7 +28,7 @@
   =====================================================================
 */
 
-#include "cudapcg_kernels_source.h"
+#include "matrix_free.h"
 #include "utils.h"
 #include "../error_handling.h"
 

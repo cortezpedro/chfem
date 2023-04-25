@@ -2,8 +2,8 @@
 
 */
 
-#include "cudapcg_minres.h"
-#include "../kernels/cudapcg_kernels_wrappers.h"
+#include "minres.h"
+#include "../kernels/wrappers.h"
 
 //---------------------------------
 ///////////////////////////////////
@@ -22,7 +22,7 @@ cudapcgFlag_t setX0_minres(cudapcgSolver_t *solver, cudapcgVar_t *x0, cudapcgFla
       unsigned int nodal_dofs = solver->model->nvars/solver->model->nelem;
       unsigned int coarse_var_sz = sizeof(cudapcgVar_t)*nodal_dofs*((solver->model->ncols)/2)*((solver->model->nrows)/2)*((solver->model->nlayers)/2+(solver->model->nlayers<2));
       HANDLE_ERROR(cudaMemcpy(solver->q,x0,coarse_var_sz,cudaMemcpyHostToDevice));
-      interpl2(solver->x,solver->q,solver->model->ncols,solver->model->nrows,solver->model->nlayers,solver->model->nvars/solver->model->nelem);
+      interpl2(solver->q,solver->model->nrows,solver->model->ncols,solver->model->nlayers,solver->model->nvars/solver->model->nelem,solver->x);
   } else {
       HANDLE_ERROR(cudaMemcpy(solver->x,x0,var_sz,cudaMemcpyHostToDevice));
   }
@@ -133,8 +133,8 @@ cudapcgFlag_t solve_minres(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     }
     delta_old = delta;
 
-    arrcpy(d,r,n);
-    arrcpy(q,s,n);
+    arrcpy(r,n,d);
+    arrcpy(s,n,q);
 
     #ifdef CUDAPCG_TRACK_STOPCRIT
     switch (solver->resnorm_flag){
