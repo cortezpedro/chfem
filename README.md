@@ -142,6 +142,8 @@ Obs.: These are memory **estimates**, for the sake of reference.
 
 Obs.2: Porosity $\phi=0.25$ admitted for the FLUID analysis shown above.
 
+Obs.3: Lower memory requirements can be achieved with the 3 and 2 vector solvers (CG3, CG2, MINRES3, MINRES2).
+
 ## Requirements
 
 + An NVIDIA GPU with compute capability $\geq$ 5.0. (_Might work with older hardware, provided that its appropriate architecture flags are passed to the compiler_)
@@ -231,11 +233,13 @@ Optional parameters:
 -f: Input scalar density field. Must be followed by a [.bin] file.
 -h: Print this help info and exit.
 -i: Input files. Must be followed by: [.nf] [.raw].
+-j: Jacobi preconditioning: 0 - no, 1 - yes (default).
 -m: Write metrics report. Must be followed by a string with a filename.
 -p: Parallel matrix-free strategy: 0 - NBN (default), 1 - EBE.
 -pm: Pore mapping strategy: 0 - image, 1 - DOF number (default).
 -r: Number of recursive searches for initial guesses.
--s: Solver: 0 - PCG (default), 1 - CG, 2 - MINRES.
+-s: Solver: 0 - CG (default), 1 - MINRES, 2 - CG3, 3 - MINRES3, 4 - CG2, 5 - MINRES2.
+-u: Reduce strategy for velocity fields (FLUID): 0 - on the fly, 1 - only diag, 2 - full.
 -xi: Import initial guesses for PCG solver from binary files. Must be followed by a string with a filename.
 -xo: Export result vector (x) from the PCG solver.
 ```
