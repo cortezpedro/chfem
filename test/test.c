@@ -106,54 +106,60 @@ input_t INPUTS[NUM_TESTS] = {
     CUDAPCG_L2_NORM,         // -c
     CUDAPCG_POREMAP_NUM,     // -pm
     HOMOGENIZE_ALL,          // -d
-    CUDAPCG_DEFAULT_SOLVER,  // -s
+    CUDAPCG_CG_SOLVER,       // -s
     CUDAPCG_NBN,             // -p
-    1                        // -r
+    1,                       // -r
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL // -j, -u
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_ALL,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_EBE,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_ALL,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_EBE,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_ALL,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_NBN,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_ALL,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_EBE,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_ALL,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_EBE,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
@@ -162,70 +168,78 @@ input_t INPUTS[NUM_TESTS] = {
     HOMOGENIZE_ALL,
     CUDAPCG_MINRES_SOLVER,
     CUDAPCG_NBN,
-    0
+    0,
+    CUDAPCG_FALSE, CUDAPCG_XREDUCE_FULL // no jacobi
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_X,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_NBN,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_X,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_EBE,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_X,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_EBE,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_Y,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_NBN,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_Y,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_EBE,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_Y,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_EBE,
-    1
+    1,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   },
   { 
     DEFAULT_IO_FLAGS,
     CUDAPCG_L2_NORM,
     CUDAPCG_POREMAP_NUM,
     HOMOGENIZE_Z,
-    CUDAPCG_DEFAULT_SOLVER,
+    CUDAPCG_CG_SOLVER,
     CUDAPCG_NBN,
-    0
+    0,
+    CUDAPCG_TRUE, CUDAPCG_XREDUCE_FULL
   }
 };
 //------------------------------------------------------------------------------
@@ -287,6 +301,12 @@ int runTest(input_t *input, result_t *res){
   // Set solver flag
   hmgSetSolverFlag(input->solver_flag);
 
+  // Set preconditioner flag
+  hmgSetPreConditionerFlag(input->preconditioner_flag);
+
+  // Set xreduce flag
+  hmgSetXReduceFlag(input->xreduce_flag);
+
   // Set homogenization direction flag (default is HOMOGENIZE_ALL)
   hmgSetHomogenizationFlag(input->hmg_direction_flag);
   
@@ -310,8 +330,9 @@ int runTest(input_t *input, result_t *res){
   double C_ref[36];
   FILE *file;
   file = fopen(res->bin_file,"rb");
-  if (file)
-    fread(&C_ref[0],sizeof(double)*res->sz,1,file);
+  if (file){
+    if (fread(&C_ref[0],sizeof(double),res->sz,file) < res->sz) printf("WARNING: Failed to read all %d items from %s\n",res->sz,res->bin_file);
+  }
   fclose(file);
   
   res->max_diff = 0.0;

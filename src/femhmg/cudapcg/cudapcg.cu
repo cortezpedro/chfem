@@ -28,9 +28,22 @@
 #include "cudapcg.h"
 #include "error_handling.h"
 #include "kernels/wrappers.h"
-#include "solvers/pcg.h"
+
 #include "solvers/cg.h"
+#include "solvers/pcg.h"
+#include "solvers/cg3.h"
+#include "solvers/pcg3.h"
+
 #include "solvers/minres.h"
+#include "solvers/pminres.h"
+#include "solvers/minres3.h"
+#include "solvers/pminres3.h"
+
+// Only available for permeability analysis for now.
+#include "solvers/cg2.h"
+#include "solvers/pcg2.h"
+#include "solvers/minres2.h"
+#include "solvers/pminres2.h"
 
 //---------------------------------
 ///////////////////////////////////
@@ -98,7 +111,12 @@ cudapcgFlag_t isModelValid(cudapcgSolver_t *_solver){
 // Setters and getters
 cudapcgFlag_t cudapcgSetNumTol(cudapcgTol_t t){ if(solver==NULL) return CUDAPCG_FALSE; solver->num_tol = t; return CUDAPCG_TRUE; }
 cudapcgFlag_t cudapcgSetMaxIterations(unsigned int n){ if(solver==NULL) return CUDAPCG_FALSE; solver->max_iterations = n; return CUDAPCG_TRUE; }
+cudapcgFlag_t cudapcgSetXReduceMode(cudapcgFlag_t flag){ if(solver==NULL) return CUDAPCG_FALSE; solver->xreduce_flag = flag <= CUDAPCG_XREDUCE_FULL ? flag : CUDAPCG_XREDUCE_FULL; return CUDAPCG_TRUE; }
+cudapcgFlag_t cudapcgSetXReduceShift(unsigned int shift){ if(solver==NULL) return CUDAPCG_FALSE; solver->xreduce_shift = shift; return CUDAPCG_TRUE; }
+cudapcgFlag_t cudapcgSetXReduceScale(double scl){ if(solver==NULL) return CUDAPCG_FALSE; solver->xreduce_scale = scl; return CUDAPCG_TRUE; }
+cudapcgFlag_t cudapcgSetReduceStabFactor(double scl){ if(solver==NULL) return CUDAPCG_FALSE; solver->reduce_stab_factor = scl; return CUDAPCG_TRUE; }
 cudapcgFlag_t cudapcgSetSolver(cudapcgFlag_t flag){ if(solver==NULL) return CUDAPCG_FALSE; return setSolver(flag);}
+cudapcgFlag_t cudapcgSetPreconditioner(cudapcgFlag_t flag){ if(solver==NULL) return CUDAPCG_FALSE; solver->preconditioner_flag = (flag>0) ? CUDAPCG_TRUE : CUDAPCG_FALSE; solver->solver_flag++; return setSolver(solver->solver_flag-1);}
 cudapcgFlag_t cudapcgSetResNorm(cudapcgFlag_t flag){ if(solver==NULL) return CUDAPCG_FALSE; return setResNorm(flag);}
 unsigned int cudapcgGetNumIterations(){ if(solver==NULL) return 0; return solver->iteration; }
 unsigned int cudapcgGetMaxNumIterations(){ if(solver==NULL) return 0; return solver->max_iterations; }
@@ -151,6 +169,11 @@ cudapcgFlag_t cudapcgInit(cudapcgFlag_t analysis_flag, cudapcgFlag_t parStrategy
     solver->num_tol = CUDAPCG_TOLERANCE;
     solver->max_iterations = CUDAPCG_MAX_ITERATIONS;
 
+    solver->xreduce_flag = CUDAPCG_XREDUCE_FULL;
+    solver->xreduce_shift = 0;
+    solver->xreduce_scale = 1.0;
+    solver->reduce_stab_factor = 0.0001;
+
     solver->resnorm_flag = CUDAPCG_L2_NORM;
 
     solver->userAllocatedArrays_flag = CUDAPCG_FALSE;
@@ -161,11 +184,12 @@ cudapcgFlag_t cudapcgInit(cudapcgFlag_t analysis_flag, cudapcgFlag_t parStrategy
       return CUDAPCG_FALSE;
 
     // Initialize solver
-    solver->solver_flag = CUDAPCG_DEFAULT_SOLVER;
-    solver->solve = solve_default;
-    solver->setX0 = setX0_default;
-    solver->allocDeviceArrays = allocDeviceArrays_default;
-    solver->freeDeviceArrays = freeDeviceArrays_default;
+    solver->solver_flag = CUDAPCG_CG_SOLVER;
+    solver->preconditioner_flag = CUDAPCG_TRUE;
+    solver->solve = solve_pcg;
+    solver->setX0 = setX0_cg;
+    solver->allocDeviceArrays = allocDeviceArrays_cg;
+    solver->freeDeviceArrays = freeDeviceArrays_cg;
 
     // Initialize arrays pointing to NULL
     solver->x = NULL;
@@ -177,18 +201,15 @@ cudapcgFlag_t cudapcgInit(cudapcgFlag_t analysis_flag, cudapcgFlag_t parStrategy
 }
 //------------------------------------------------------------------------------
 cudapcgFlag_t cudapcgEnd(){
-    if (solver == NULL)
-        return CUDAPCG_FALSE;
-    if (solver->x0_hasBeenSet_flag){
-        if (solver->x!=NULL) HANDLE_ERROR(cudaFree(solver->x)); solver->x=NULL;
-        if (solver->d!=NULL) HANDLE_ERROR(cudaFree(solver->d)); solver->d=NULL;
-    }
+    if (solver == NULL) return CUDAPCG_FALSE;
     free(solver->header_str);
-    if (solver->model!=NULL && solver->model->freeAllowed_flag)
-      freeModelStruct(solver->model);
-    if (solver->userAllocatedArrays_flag)
-      cudapcgFreeArrays();
+    if (solver->model!=NULL && solver->model->freeAllowed_flag) freeModelStruct(solver->model);
+    if (solver->userAllocatedArrays_flag) cudapcgFreeArrays();
+    if (solver->x!=NULL) HANDLE_ERROR(cudaFree(solver->x)); solver->x=NULL;
     if (solver->r!=NULL) HANDLE_ERROR(cudaFree(solver->r)); solver->r=NULL;
+    if (solver->d!=NULL) HANDLE_ERROR(cudaFree(solver->d)); solver->d=NULL;
+    if (solver->q!=NULL) HANDLE_ERROR(cudaFree(solver->q)); solver->q=NULL;
+    if (solver->s!=NULL) HANDLE_ERROR(cudaFree(solver->s)); solver->s=NULL;
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       freeLocalK();
     #endif
@@ -207,13 +228,18 @@ cudapcgModel_t * cudapcgNewModel(void){
   new_model->parStrategy_flag = CUDAPCG_NBN;
   new_model->poremap_flag     = CUDAPCG_POREMAP_NUM;
   new_model->parametric_density_field_flag = CUDAPCG_FALSE;
+  #ifdef TESTING_STENCIL
+  new_model->SBS_flag = CUDAPCG_TRUE;
+  #else
+  new_model->SBS_flag = CUDAPCG_FALSE;
+  #endif
   new_model->nrows = 0;
   new_model->ncols = 0;
   new_model->nlayers = 0;
   new_model->nelem = 0;
   new_model->nvars = 0;
   new_model->nkeys = 0;
-  new_model->nlocalvars = 0;
+  new_model->localmtxdim = 0;
   new_model->nporenodes = 0;
   new_model->nbordernodes = 0;
   new_model->image = NULL;
@@ -233,7 +259,7 @@ cudapcgFlag_t cudapcgSetModel(cudapcgModel_t *model){
     freeModelStruct(solver->model);
   solver->model = model;
   cudapcgFreeArrays();
-  unsigned int var_sz = sizeof(cudapcgVar_t)*solver->model->nvars;
+  size_t var_sz = sizeof(cudapcgVar_t)*((size_t)solver->model->nvars);
   if (solver->r!=NULL) HANDLE_ERROR(cudaFree(solver->r)); solver->r=NULL;
   HANDLE_ERROR(cudaMalloc(&(solver->r),var_sz));
   return CUDAPCG_TRUE;
@@ -255,7 +281,7 @@ cudapcgFlag_t cudapcgBuildModel(const void *data){
   }
   if (!setModelStruct(&(solver->model),data)) return CUDAPCG_FALSE;
   cudapcgFreeArrays();
-  unsigned int var_sz = sizeof(cudapcgVar_t)*solver->model->nvars;
+  size_t var_sz = sizeof(cudapcgVar_t)*((size_t)solver->model->nvars);
   if (solver->r!=NULL) HANDLE_ERROR(cudaFree(solver->r)); solver->r=NULL;
   HANDLE_ERROR(cudaMalloc(&(solver->r),var_sz));
   if (solver->analysis_flag < CUDAPCG_FLUID_2D){
@@ -285,24 +311,19 @@ cudapcgFlag_t cudapcgBuildModel(const void *data){
 }
 //------------------------------------------------------------------------------
 cudapcgFlag_t cudapcgSetX0(cudapcgVar_t *x0, cudapcgFlag_t mustInterpolate){
-    if (!isModelValid(solver))
-        return CUDAPCG_FALSE;
+    if (!isModelValid(solver)) return CUDAPCG_FALSE;
     // Check if an array was provided
-    if (x0 != NULL)
-        return solver->setX0(solver,x0,mustInterpolate);
+    if (x0 != NULL) return solver->setX0(solver,x0,mustInterpolate);
     // Recieved null pointer for x0
-    if (!solver->x0_hasBeenSet_flag)
-        return CUDAPCG_TRUE;
-    if (solver->x == NULL){
-        solver->x0_hasBeenSet_flag = CUDAPCG_FALSE;
-        return CUDAPCG_TRUE;
-    }
-    if (solver->userAllocatedArrays_flag){
-        zeros(solver->x,solver->model->nvars);
-        return CUDAPCG_TRUE;
-    }
-    if (solver->x!=NULL) HANDLE_ERROR(cudaFree(solver->x)); solver->x = NULL;
+    if (!solver->x0_hasBeenSet_flag) return CUDAPCG_TRUE;
     solver->x0_hasBeenSet_flag = CUDAPCG_FALSE;
+    cudapcgVar_t **ptr_to_device_x0 = solver->solver_flag < CUDAPCG_CG2_SOLVER ? &(solver->x) : &(solver->d);
+    if (*ptr_to_device_x0 == NULL) return CUDAPCG_TRUE;
+    if (solver->userAllocatedArrays_flag){
+        zeros(*ptr_to_device_x0,solver->model->nvars);
+        return CUDAPCG_TRUE;
+    }
+    if (*ptr_to_device_x0!=NULL) HANDLE_ERROR(cudaFree(*ptr_to_device_x0)); *ptr_to_device_x0 = NULL;
     return CUDAPCG_TRUE;
 }
 //------------------------------------------------------------------------------
@@ -362,7 +383,7 @@ cudapcgFlag_t cudapcgSetDOF2PeriodicMap(cudapcgIdMap_t *nodes){
 cudapcgFlag_t cudapcgSetLclMtxs(cudapcgVar_t * LclMtxs){
     if (!isModelValid(solver))
         return CUDAPCG_FALSE;
-    unsigned long int sz = solver->model->nkeys*solver->model->nlocalvars*sizeof(cudapcgVar_t);
+    size_t sz = solver->model->nkeys*solver->model->localmtxdim*sizeof(cudapcgVar_t);
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       freeLocalK(); // for safety
       allocLocalK(sz);
@@ -512,37 +533,79 @@ cudapcgFlag_t setAnalysis(){
 
     solver->assemblePreConditioner = assemblePreConditioner_thermal_2D;
     solver->applyPreConditioner = applyPreConditioner_thermal_2D;
+    solver->applyinvPreConditioner = applyinvPreConditioner_thermal_2D;
     solver->Aprod = Aprod_thermal_2D;
+    solver->PreConditionerAprod = PreConditionerAprod_thermal_2D;
+    solver->dotPreConditioner = dotPreConditioner_thermal_2D;
+    solver->dotinvPreConditioner = dotinvPreConditioner_thermal_2D;
+    solver->dotAprod = dotAprod_thermal_2D;
+    solver->dotA2prod = dotA2prod_thermal_2D;
+    solver->dotPreConditionerA2prod = dotPreConditionerA2prod_thermal_2D;
 
   } else if (solver->analysis_flag == CUDAPCG_THERMAL_3D){
 
     solver->assemblePreConditioner = assemblePreConditioner_thermal_3D;
     solver->applyPreConditioner = applyPreConditioner_thermal_3D;
+    solver->applyinvPreConditioner = applyinvPreConditioner_thermal_3D;
     solver->Aprod = Aprod_thermal_3D;
+    solver->PreConditionerAprod = PreConditionerAprod_thermal_3D;
+    solver->dotPreConditioner = dotPreConditioner_thermal_3D;
+    solver->dotinvPreConditioner = dotinvPreConditioner_thermal_3D;
+    solver->dotAprod = dotAprod_thermal_3D;
+    solver->dotA2prod = dotA2prod_thermal_3D;
+    solver->dotPreConditionerA2prod = dotPreConditionerA2prod_thermal_3D;
 
   } else if (solver->analysis_flag == CUDAPCG_ELASTIC_2D){
 
     solver->assemblePreConditioner = assemblePreConditioner_elastic_2D;
     solver->applyPreConditioner = applyPreConditioner_elastic_2D;
+    solver->applyinvPreConditioner = applyinvPreConditioner_elastic_2D;
     solver->Aprod = Aprod_elastic_2D;
+    solver->PreConditionerAprod = PreConditionerAprod_elastic_2D;
+    solver->dotPreConditioner = dotPreConditioner_elastic_2D;
+    solver->dotinvPreConditioner = dotinvPreConditioner_elastic_2D;
+    solver->dotAprod = dotAprod_elastic_2D;
+    solver->dotA2prod = dotA2prod_elastic_2D;
+    solver->dotPreConditionerA2prod = dotPreConditionerA2prod_elastic_2D;
 
   } else if (solver->analysis_flag == CUDAPCG_ELASTIC_3D){
 
     solver->assemblePreConditioner = assemblePreConditioner_elastic_3D;
     solver->applyPreConditioner = applyPreConditioner_elastic_3D;
+    solver->applyinvPreConditioner = applyinvPreConditioner_elastic_3D;
     solver->Aprod = Aprod_elastic_3D;
+    solver->PreConditionerAprod = PreConditionerAprod_elastic_3D;
+    solver->dotPreConditioner = dotPreConditioner_elastic_3D;
+    solver->dotinvPreConditioner = dotinvPreConditioner_elastic_3D;
+    solver->dotAprod = dotAprod_elastic_3D;
+    solver->dotA2prod = dotA2prod_elastic_3D;
+    solver->dotPreConditionerA2prod = dotPreConditionerA2prod_elastic_3D;
 
   } else if (solver->analysis_flag == CUDAPCG_FLUID_2D){
 
     solver->assemblePreConditioner = NULL;
     solver->applyPreConditioner = applyPreConditioner_fluid_2D;
+    solver->applyinvPreConditioner = applyinvPreConditioner_fluid_2D;
     solver->Aprod = Aprod_fluid_2D;
+    solver->PreConditionerAprod = PreConditionerAprod_fluid_2D;
+    solver->dotPreConditioner = dotPreConditioner_fluid_2D;
+    solver->dotinvPreConditioner = dotinvPreConditioner_fluid_2D;
+    solver->dotAprod = dotAprod_fluid_2D;
+    solver->dotA2prod = dotA2prod_fluid_2D;
+    solver->dotPreConditionerA2prod = dotPreConditionerA2prod_fluid_2D;
 
   } else if (solver->analysis_flag == CUDAPCG_FLUID_3D){
 
     solver->assemblePreConditioner = NULL;
     solver->applyPreConditioner = applyPreConditioner_fluid_3D;
+    solver->applyinvPreConditioner = applyinvPreConditioner_fluid_3D;
     solver->Aprod = Aprod_fluid_3D;
+    solver->PreConditionerAprod = PreConditionerAprod_fluid_3D;
+    solver->dotPreConditioner = dotPreConditioner_fluid_3D;
+    solver->dotinvPreConditioner = dotinvPreConditioner_fluid_3D;
+    solver->dotAprod = dotAprod_fluid_3D;
+    solver->dotA2prod = dotA2prod_fluid_3D;
+    solver->dotPreConditionerA2prod = dotPreConditionerA2prod_fluid_3D;
 
   } else return CUDAPCG_FALSE;
 
@@ -553,28 +616,66 @@ cudapcgFlag_t setSolver(unsigned int flag){
 
   if (solver == NULL) return CUDAPCG_FALSE;
 
-  if (flag > CUDAPCG_MINRES_SOLVER){
+  if (flag > CUDAPCG_MINRES2_SOLVER){
     printf("ERROR: Invalid \"solverFlag\" (%d).\n",flag);
     return CUDAPCG_FALSE;
   }
 
   if (solver->solver_flag == flag) return CUDAPCG_TRUE;
 
-  if (flag == CUDAPCG_DEFAULT_SOLVER){
-    solver->solve = solve_default;
-    solver->setX0 = setX0_default;
-    solver->allocDeviceArrays = allocDeviceArrays_default;
-    solver->freeDeviceArrays = freeDeviceArrays_default;
-  } else if (flag == CUDAPCG_NOJACOBI_SOLVER){
-    solver->solve = solve_nojacobi;
-    solver->setX0 = setX0_nojacobi;
-    solver->allocDeviceArrays = allocDeviceArrays_nojacobi;
-    solver->freeDeviceArrays = freeDeviceArrays_nojacobi;
+  if (flag == CUDAPCG_CG_SOLVER){
+    if (solver->preconditioner_flag == CUDAPCG_TRUE)
+      solver->solve = solve_pcg;
+    else
+      solver->solve = solve_cg;
+    solver->setX0 = setX0_cg;
+    solver->allocDeviceArrays = allocDeviceArrays_cg;
+    solver->freeDeviceArrays = freeDeviceArrays_cg;
+
   } else if (flag == CUDAPCG_MINRES_SOLVER){
-    solver->solve = solve_minres;
+    if (solver->preconditioner_flag == CUDAPCG_TRUE)
+      solver->solve = solve_pminres;
+    else
+      solver->solve = solve_minres;
     solver->setX0 = setX0_minres;
     solver->allocDeviceArrays = allocDeviceArrays_minres;
     solver->freeDeviceArrays = freeDeviceArrays_minres;
+
+  } else if (flag == CUDAPCG_CG3_SOLVER){
+    if (solver->preconditioner_flag == CUDAPCG_TRUE)
+      solver->solve = solve_pcg3;
+    else
+      solver->solve = solve_cg3;
+    solver->setX0 = setX0_cg3;
+    solver->allocDeviceArrays = allocDeviceArrays_cg3;
+    solver->freeDeviceArrays = freeDeviceArrays_cg3;
+
+  } else if (flag == CUDAPCG_MINRES3_SOLVER){
+    if (solver->preconditioner_flag == CUDAPCG_TRUE)
+      solver->solve = solve_pminres3;
+    else
+      solver->solve = solve_minres3;
+    solver->setX0 = setX0_minres3;
+    solver->allocDeviceArrays = allocDeviceArrays_minres3;
+    solver->freeDeviceArrays = freeDeviceArrays_minres3;
+
+  } else if (flag == CUDAPCG_CG2_SOLVER){
+    if (solver->preconditioner_flag == CUDAPCG_TRUE)
+      solver->solve = solve_pcg2;
+    else
+      solver->solve = solve_cg2;
+    solver->setX0 = setX0_cg2;
+    solver->allocDeviceArrays = allocDeviceArrays_cg2;
+    solver->freeDeviceArrays = freeDeviceArrays_cg2;
+
+  } else if (flag == CUDAPCG_MINRES2_SOLVER){
+    if (solver->preconditioner_flag == CUDAPCG_TRUE)
+      solver->solve = solve_pminres2;
+    else
+      solver->solve = solve_minres2;
+    solver->setX0 = setX0_minres2;
+    solver->allocDeviceArrays = allocDeviceArrays_minres2;
+    solver->freeDeviceArrays = freeDeviceArrays_minres2;
   }
 
   if (solver->s != NULL) { HANDLE_ERROR(cudaFree(solver->s)); solver->s = NULL; }

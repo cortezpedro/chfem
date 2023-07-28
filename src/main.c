@@ -79,9 +79,13 @@ int main(int argc, char * argv[]){
   initDefaultInput(user_input);
 
   // Check input
-  if (!readInput(argv,argc,user_input)){
+  unsigned char readInput_flag = readInput(argv,argc,user_input);
+  if (!readInput_flag){
     free(user_input);
     printf("Failed to parse arguments.\nProcess aborted.\n");
+    return 0;
+  } else if (readInput_flag==2){ // found -h
+    free(user_input);
     return 0;
   }
 
@@ -116,6 +120,12 @@ int main(int argc, char * argv[]){
   // Set solver flag
   hmgSetSolverFlag(user_input->solver_flag);
 
+  // Set preconditioner flag
+  hmgSetPreConditionerFlag(user_input->preconditioner_flag);
+
+  // Set xreduce flag
+  hmgSetXReduceFlag(user_input->xreduce_flag);
+
   // Set homogenization direction flag (default is HOMOGENIZE_ALL)
   hmgSetHomogenizationFlag(user_input->hmg_direction_flag);
 
@@ -123,7 +133,7 @@ int main(int argc, char * argv[]){
   hmgPrintModelData();
 
   // Specify stopping criteria for the pcg solver
-  hmgSetStoppingCriteria(user_input->pcg_stopcrit_flag);
+  hmgSetStoppingCriteria(user_input->stopcrit_flag);
 
   // Initial guesses for PCG solver
   if (user_input->importX_flag){
@@ -162,7 +172,7 @@ int main(int argc, char * argv[]){
 }
 //------------------------------------------------------------------------------
 void printHelp(){
-  printf("\nComputational Homogenization with the image-based FEM in GPU - v1.1 - (2020-2022) - LCC UFF\n\n");
+  printf("\nComputational Homogenization with the image-based FEM in GPU - v1.2 - (2020-2023) - LCC UFF\n\n");
 
   printf("./chfem_gpu [.nf] [.raw] ... (options)\n\nor\n\n./chfem_gpu (options) ... -i [.nf] [.raw] ... (options)\n\n");
   printf("\t-b: Save results in a binary file. Must be followed by a string with a filename.\n");
@@ -172,11 +182,13 @@ void printHelp(){
   printf("\t-f: Input scalar density field. Must be followed by a [.bin] file.\n");
   printf("\t-h: Print this help info and exit.\n");
   printf("\t-i: Input files. Must be followed by: [.nf] [.raw].\n");
+  printf("\t-j: Jacobi preconditioning: 0 - no, 1 - yes (default).\n");
   printf("\t-m: Write metrics report. Must be followed by a string with a filename.\n");
   printf("\t-p: Parallel matrix-free strategy: 0 - NBN (default), 1 - EBE.\n");
   printf("\t-pm: Pore mapping strategy: 0 - image, 1 - DOF number (default).\n");
   printf("\t-r: Number of recursive searches for initial guesses.\n");
-  printf("\t-s: Solver: 0 - PCG (default), 1 - CG, 2 - MINRES.\n");
+  printf("\t-s: Solver: 0 - CG (default), 1 - MINRES, 2 - CG3, 3 - MINRES3, 4 - CG2, 5 - MINRES2.\n");
+  printf("\t-u: Reduce strategy for velocity fields (FLUID): 0 - on the fly, 1 - only diag, 2 - full.\n");
   printf("\t-xi: Import initial guesses for PCG solver from binary files. Must be followed by a string with a filename.\n");
   printf("\t-xo: Export result vector (x) from the PCG solver.\n\n");
 
@@ -200,16 +212,13 @@ unsigned char readInput(char *arr[], unsigned int sz, chfemgpuInput_t * user_inp
     printf("Invalid input.\nCall -h for help with input directives.\n");
     return 0;
   }
-  if (sz==2){
-    if (!strcmp(arr[1],"-h"))
-      printHelp();
-    else
-      printf("Invalid input ignored: %s.\nCall -h for help with input directives.\n",arr[1]);
-    return 0;
-  }
   // Search for -h flag
   if (findFlag("-h",arr,sz)){
     printHelp();
+    return 2;
+  }
+  if (sz==2){
+    printf("Invalid input ignored: %s.\nCall -h for help with input directives.\n",arr[1]);
     return 0;
   }
   // Find strings with input files
@@ -225,6 +234,10 @@ unsigned char readInput(char *arr[], unsigned int sz, chfemgpuInput_t * user_inp
     if (i!=id){
       if (!strcmp(arr[i],"-r")){
         ptr_prop = &(user_input->num_of_recursions_initguess);
+      } else if (!strcmp(arr[i],"-j")){
+        ptr_prop = &(user_input->preconditioner_flag);
+      } else if (!strcmp(arr[i],"-u")){
+        ptr_prop = &(user_input->xreduce_flag);
       } else if (!strcmp(arr[i],"-s")){
         ptr_prop = &(user_input->solver_flag);
       } else if (!strcmp(arr[i],"-p")){
@@ -234,7 +247,7 @@ unsigned char readInput(char *arr[], unsigned int sz, chfemgpuInput_t * user_inp
       } else if (!strcmp(arr[i],"-d")){
         ptr_prop = &(user_input->hmg_direction_flag);
       } else if (!strcmp(arr[i],"-c")){
-        ptr_prop = &(user_input->pcg_stopcrit_flag);
+        ptr_prop = &(user_input->stopcrit_flag);
       } else if (!strcmp(arr[i],"-e")){
         //str_buffer = READ_ENTRY(++i,arr,sz); if (str_buffer==NULL) return 0;
         user_input->exportFields_flag = 1;
@@ -287,7 +300,11 @@ unsigned char readInput(char *arr[], unsigned int sz, chfemgpuInput_t * user_inp
     printf("Invalid input, .nf and .raw files are required to characterize model.\n");
     success = 0;
   }
-  if (user_input->solver_flag>2){
+  if (user_input->xreduce_flag>2){
+    printf("Invalid reduce strategy flag.\n");
+    success = 0;
+  }
+  if (user_input->solver_flag>5){
     printf("Invalid solver flag.\n");
     success = 0;
   }
@@ -305,6 +322,7 @@ void initDefaultInput(chfemgpuInput_t * user_input){
   user_input->sdf_bin_file = NULL;
   user_input->hmg_direction_flag = HOMOGENIZE_ALL;
   user_input->solver_flag = 0;
+  user_input->preconditioner_flag = 1;
   user_input->parallel_flag = 0;
   user_input->num_of_recursions_initguess = 0;
   user_input->save2binary_flag = 0;
@@ -316,8 +334,9 @@ void initDefaultInput(chfemgpuInput_t * user_input){
   user_input->exportX_flag = 0;
   user_input->importX_flag = 0;
   user_input->x0_file = NULL;
-  user_input->pcg_stopcrit_flag = 0;
+  user_input->stopcrit_flag = 0;
   user_input->poremap_flag = 1;
+  user_input->xreduce_flag = 2;
   return;
 }
 //------------------------------------------------------------------------------

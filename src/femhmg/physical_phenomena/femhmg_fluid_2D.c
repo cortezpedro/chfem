@@ -123,6 +123,7 @@ void assembleRHS_fluid_2D(hmgModel_t *model){
   return;
 }
 //------------------------------------------------------------------------------
+/*
 void assembleRHS_PressureGrad_fluid_2D(hmgModel_t *model){
 
   #pragma omp parallel for
@@ -216,6 +217,7 @@ void assembleRHS_PressureGrad_fluid_2D(hmgModel_t *model){
 
   return;
 }
+*/
 //------------------------------------------------------------------------------
 void updateC_fluid_2D(hmgModel_t *model, cudapcgVar_t * V){
   var C_i=0.0,C_j=0.0;
@@ -346,18 +348,17 @@ void saveFields_fluid_2D(hmgModel_t *model, cudapcgVar_t * V){
   return;
 }
 //------------------------------------------------------------------------------
+/*
 void laplace2stokes_fluid_2D(hmgModel_t *model){
 
   char str_buffer[1024];
 
-  /*
-  sprintf(str_buffer,"%s_flux_%d.bin",model->neutralFile_noExt,model->m_hmg_flag);
-  FILE *file = fopen(str_buffer,"rb");
-  if (!file) return;
-  cudapcgVar_t *x0_fromfile = (cudapcgVar_t *)malloc(sizeof(cudapcgVar_t)*model->m_nelem*3); //qx,qy,t
-  fread(x0_fromfile,sizeof(cudapcgVar_t)*model->m_nelem*2,1,file);
-  fclose(file);
-  */
+  //sprintf(str_buffer,"%s_flux_%d.bin",model->neutralFile_noExt,model->m_hmg_flag);
+  //FILE *file = fopen(str_buffer,"rb");
+  //if (!file) return;
+  //cudapcgVar_t *x0_fromfile = (cudapcgVar_t *)malloc(sizeof(cudapcgVar_t)*model->m_nelem*3); //qx,qy,t
+  //fread(x0_fromfile,sizeof(cudapcgVar_t)*model->m_nelem*2,1,file);
+  //fclose(file);  
 
   sprintf(str_buffer,"%s_temperature_%d.bin",model->neutralFile_noExt,model->m_hmg_flag);
   FILE *file = fopen(str_buffer,"rb");
@@ -379,12 +380,12 @@ void laplace2stokes_fluid_2D(hmgModel_t *model){
   for (unsigned int n=0; n<nn; n++){
     id = model->dof_id_map[n];
     fluidkey = model->dof_fluid_map[n];
-    /*
-    if ((fluidkey&15)==15){
-      x0[2*id] = -x0_fromfile[2*n];
-      x0[2*id+1] = -x0_fromfile[2*n+1];
-    }
-    */
+    
+    //if ((fluidkey&15)==15){
+    //  x0[2*id] = -x0_fromfile[2*n];
+    //  x0[2*id+1] = -x0_fromfile[2*n+1];
+    //}
+    
     if (fluidkey&15){
       x0[2*model->m_nVelocityNodes+id] = x0_fromfile[n]/((cudapcgVar_t) cols);//[2*model->m_nelem+n];
     }
@@ -394,6 +395,7 @@ void laplace2stokes_fluid_2D(hmgModel_t *model){
 
   return;
 }
+*/
 //------------------------------------------------------------------------------
 
 //---------------------------------

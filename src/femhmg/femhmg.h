@@ -32,8 +32,10 @@
 logical hmgInit(char * data_filename, char * elem_filename, char *sdf_filename);
 logical hmgEnd();
 
+void hmgSetXReduceFlag(cudapcgFlag_t flag);
 void hmgSetParallelStrategyFlag(cudapcgFlag_t flag);
 void hmgSetSolverFlag(cudapcgFlag_t flag);
+void hmgSetPreConditionerFlag(cudapcgFlag_t flag);
 void hmgSetStoppingCriteria(cudapcgFlag_t flag);
 logical hmgSetPoreMappingStrategy(cudapcgFlag_t flag);
 

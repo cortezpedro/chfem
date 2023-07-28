@@ -31,10 +31,17 @@
 #define CUDAPCG_FLUID_2D 4
 #define CUDAPCG_FLUID_3D 5
 
-#define CUDAPCG_DEFAULT_SOLVER 0
-#define CUDAPCG_NOJACOBI_SOLVER 1
-#define CUDAPCG_MINRES_SOLVER 2
+#define CUDAPCG_CG_SOLVER 0
+#define CUDAPCG_MINRES_SOLVER 1
+#define CUDAPCG_CG3_SOLVER 2
+#define CUDAPCG_MINRES3_SOLVER 3
+#define CUDAPCG_CG2_SOLVER 4
+#define CUDAPCG_MINRES2_SOLVER 5
 // More solvers soon
+
+#define CUDAPCG_XREDUCE_NONE 0
+#define CUDAPCG_XREDUCE_ONLYDIR 1
+#define CUDAPCG_XREDUCE_FULL 2
 
 #ifdef CUDAPCG_VAR_32BIT
   typedef float cudapcgVar_t; // 32bit IEEE754
@@ -78,7 +85,7 @@
 // Ceil unsigned int division - for cuda block dimensioning
 #define CEIL(num, div) ((num-1)/div+1)
 
-typedef unsigned char cudapcgFlag_t; // 8bit
+typedef uint8_t cudapcgFlag_t; // 8bit
 typedef unsigned int cudapcgIdMap_t; // 32bit
 
 typedef uint16_t parametricScalarField_t;
@@ -91,6 +98,7 @@ typedef struct _pcgmodel{
     cudapcgFlag_t parStrategy_flag;
     cudapcgFlag_t poremap_flag;
     cudapcgFlag_t parametric_density_field_flag;
+    cudapcgFlag_t SBS_flag;
 
     unsigned int nrows;
     unsigned int ncols;
@@ -98,9 +106,10 @@ typedef struct _pcgmodel{
 
     unsigned int nelem;
     unsigned int nvars;
+    unsigned int nvarspernode;
 
     unsigned int nkeys;
-    unsigned int nlocalvars;
+    unsigned int localmtxdim;
     unsigned int nporenodes;
     unsigned int nbordernodes;
     unsigned int nhmgvars;

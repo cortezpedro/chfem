@@ -26,7 +26,7 @@ typedef struct _input{
   unsigned char importX_flag;
   char * x0_file;
 
-  unsigned int pcg_stopcrit_flag;
+  unsigned int stopcrit_flag;
 
   unsigned int poremap_flag;
 
@@ -34,6 +34,10 @@ typedef struct _input{
   unsigned int solver_flag; //cudapcgFlag_t
   unsigned int parallel_flag; //cudapcgFlag_t
   unsigned int num_of_recursions_initguess;
+
+  unsigned int preconditioner_flag;
+
+  unsigned int xreduce_flag; //cudapcgFlag_t
 
 } chfemgpuInput_t;
 

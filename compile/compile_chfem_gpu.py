@@ -118,17 +118,17 @@ if __name__ == '__main__':
     o_files_string += ' '+f
 
   # array of compiler directives
-  extra_compiler_options = '  --compiler-options -std=gnu99' if isLinux else ''
+  extra_compiler_options = ''#'  --compiler-options -std=gnu99' if isLinux else ''
   if isLinux:
     compiler_directives = [
       'nvcc -c ../src/femhmg/cudapcg/kernels/*.cu'+input_string,
       'nvcc -c ../src/femhmg/cudapcg/solvers/*.cu'+input_string,
       'nvcc -c ../src/femhmg/cudapcg/*.cu'+input_string,
-      'nvcc -c ../src/femhmg/physical_phenomena/*.c'+input_string + extra_compiler_options,
-      'nvcc -c ../src/femhmg/report/*.c'+input_string + extra_compiler_options,
-      'nvcc -c ../src/femhmg/*.c'+input_string + extra_compiler_options,
-      'nvcc -c ../src/main.c'+input_string + extra_compiler_options,
-      'nvcc -o {}{} -Xcompiler -fopenmp -O3'.format(executable_name,o_files_string)+input_string
+      'nvcc -c ../src/femhmg/physical_phenomena/*.c -Xcompiler -fopenmp'+input_string + extra_compiler_options,
+      'nvcc -c ../src/femhmg/report/*.c -Xcompiler -fopenmp'+input_string + extra_compiler_options,
+      'nvcc -c ../src/femhmg/*.c -Xcompiler -fopenmp'+input_string + extra_compiler_options,
+      'nvcc -c ../src/main.c -Xcompiler -fopenmp'+input_string + extra_compiler_options,
+      'nvcc -o {}{} -Xcompiler -fopenmp'.format(executable_name,o_files_string)+input_string
     ]
   else: # windows
     cuda_files = [f.replace('\\\\','\\').replace('/','\\') for f in glob("../src/**/*.cu",recursive=True)]
@@ -145,15 +145,15 @@ if __name__ == '__main__':
         compiler_directives.append('nvcc -c '+f+input_string)
     for f in c_files:
       if '\\physical_phenomena' in f:
-        compiler_directives.append('nvcc -c '+f+input_string+extra_compiler_options)
+        compiler_directives.append('nvcc -c '+f+'-Xcompiler \"-openmp\"'+input_string+extra_compiler_options)
     for f in c_files:
       if '\\report' in f:
-        compiler_directives.append('nvcc -c '+f+input_string+extra_compiler_options)
+        compiler_directives.append('nvcc -c '+f+'-Xcompiler \"-openmp\"'+input_string+extra_compiler_options)
     for f in c_files:
       if not('\\physical_phenomena' in f) and not('\\report' in f) and not('main' in f):
-        compiler_directives.append('nvcc -c '+f+input_string+extra_compiler_options)
-    compiler_directives.append('nvcc -c ..\src\main.c'+input_string+extra_compiler_options)
-    compiler_directives.append('nvcc -o {}{} -Xcompiler \"-openmp\" -O3'.format(executable_name,o_files_string)+input_string)
+        compiler_directives.append('nvcc -c '+f+'-Xcompiler \"-openmp\"'+input_string+extra_compiler_options)
+    compiler_directives.append('nvcc -c ..\src\main.c -Xcompiler \"-openmp\"'+input_string+extra_compiler_options)
+    compiler_directives.append('nvcc -o {}{} -Xcompiler -fopenmp'.format(executable_name,o_files_string)+input_string)
 
   # run compiler commands in terminal
   for command in compiler_directives:

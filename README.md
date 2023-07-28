@@ -4,7 +4,7 @@
 
 Developed at the _Laboratório de Computação Científica, Universidade Federal Fluminense_ (`LCC-UFF`). Niterói, Brazil.
 
-Currently at version v1.1.1
+Currently at version v1.2
 
 Part of a toolkit for image-based numerical homogenization. The following programs are also recommended:
 + [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer), a GUI-based tool for viewing $\mu$CT data depicted by stacks of TIFF files and generating `.nf` and `.raw` files that can serve as input for `chfem_gpu`.
@@ -16,7 +16,7 @@ Part of a toolkit for image-based numerical homogenization. The following progra
 
 + Thermal conductivity $\rightarrow$ $\kappa\nabla^{2}u=0$
 + Linear elasticity $\rightarrow$ $\nabla\cdot\mathbf{C}\nabla\mathbf{u}=0$
-+ Permeability $\rightarrow$ $-\mu\nabla^{2}\mathbf{u}+\nabla p = \mathbf{b}$ ; $\nabla\cdot\mathbf{u} -\tau p=0$
++ Permeability $\rightarrow$ $\mu\nabla^{2}\mathbf{u}-\nabla p+\mathbf{b}=0$ ; $\nabla\cdot\mathbf{u} -\tau p=0$
 
 The program follows a lightweight matrix-free approach to image-based finite element analysis, exploring GPU resources with CUDA to achieve significant performance gains.
 

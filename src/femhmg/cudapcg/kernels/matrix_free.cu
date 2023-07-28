@@ -32,7 +32,9 @@
 #include "utils.h"
 #include "../error_handling.h"
 
-#if !defined CUDAPCG_MATKEY_32BIT && !defined CUDAPCG_MATKEY_64BIT
+#if defined CUDAPCG_MATKEY_8BIT
+  __constant__ cudapcgVar_t K[1152];// max size of K is 576*2 (2 materials on elastic_3D)
+#elif !defined CUDAPCG_MATKEY_32BIT && !defined CUDAPCG_MATKEY_64BIT
   __constant__ cudapcgVar_t K[2304];// max size of K is 576*4 (4 materials on elastic_3D)
 #endif
 
@@ -44,6 +46,14 @@ void setConstantLocalK(cudapcgVar_t * lclK, unsigned long int size){
   #endif
   return;
 }
+
+// Macro for shmem warp reduce
+#define REDUCE_WARP(cache,li)\
+  if (li<16) cache[li] += cache[li+16]; __syncthreads();\
+  if (li<8)  cache[li] +=  cache[li+8]; __syncthreads();\
+  if (li<4)  cache[li] +=  cache[li+4]; __syncthreads();\
+  if (li<2)  cache[li] +=  cache[li+2]; __syncthreads();\
+  if (li<1)  cache[li] +=  cache[li+1]; __syncthreads();
 
 //--------------------------------------------------------------------
 //////////////////////////////////////////////////////////////////////
@@ -137,7 +147,7 @@ __device__ void Aprod_thermal_3D_NodeByNode(unsigned int i,
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q){
+    cudapcgVar_t * v, cudapcgMap_t matkey, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t *q){
   // Local vars to store result
   cudapcgVar_t res=0.0;
   // Local var to store index in local matrix
@@ -527,6 +537,95 @@ __device__ void Aprod_fluid_2D_NodeByNode_Pore(cudapcgIdMap_t id,
   *(++q) = res_p;
 }
 //------------------------------------------------------------------------------
+__device__ void Preconditioner_fluid_2D_StencilByStencil_Pore(
+    cudapcgVar_t *q){
+  *q     = 0.25;
+  *(++q) = 0.25;
+  *(++q) = -2.25;
+}
+//------------------------------------------------------------------------------
+static __constant__ char StencilSigns_Fluid2D_Corner[4][6]={
+  {  1,  1,  1, -1, -1,  1 },
+  { -1,  1, -1,  1, -1, -1 },
+  { -1, -1, -1, -1,  1,  1 },
+  {  1, -1,  1,  1,  1, -1 }
+};
+//------------------------------------------------------------------------------
+__device__ void Aprod_fluid_2D_StencilByStencil_Pore(cudapcgIdMap_t id,
+    cudapcgVar_t * v, unsigned int nVelocityNodes, cudapcgIdMap_t *DOFMap, unsigned int rows, unsigned int cols, cudapcgVar_t *q){
+  // Local vars to store entries of v to be used on computations
+  cudapcgVar_t v_x, v_y, v_p;
+  // Local vars to store result
+  cudapcgVar_t res_x=0.0, res_y=0.0, res_p=0.0;
+  // Get row and col ids
+  int row = id%rows, col = id/rows;
+  // Local var to store neighbor dof indexes
+  unsigned int dof, dof_p;
+
+  // dof cache for stencil corners
+  cudapcgIdMap_t corner_dofs[4] = {
+    DOFMap[PERIODICNUM_2D(row-1,col-1,rows,cols)],
+    DOFMap[PERIODICNUM_2D(row+1,col-1,rows,cols)],
+    DOFMap[PERIODICNUM_2D(row-1,col+1,rows,cols)],
+    DOFMap[PERIODICNUM_2D(row+1,col+1,rows,cols)]
+  };
+
+  // center
+  dof = DOFMap[id]; dof_p = dof+nVelocityNodes*2; dof<<=1;
+  res_x += 4.0*v[dof];
+  res_y += 4.0*v[dof+1];
+  res_p += -(4.0/9.0)*v[dof_p];
+
+  // corners
+  #pragma unroll
+  for (int j=0; j<4; j++){
+    dof = corner_dofs[j]; dof_p = dof+nVelocityNodes*2;
+    if (dof<nVelocityNodes){
+      dof<<=1;
+      v_x = v[dof]; v_y = v[dof+1];
+      res_x += -0.5*v_x + 0.25*StencilSigns_Fluid2D_Corner[j][0]*v_y;
+      res_y += -0.5*v_y + 0.25*StencilSigns_Fluid2D_Corner[j][2]*v_x;
+      res_p += (1.0/12.0)*(StencilSigns_Fluid2D_Corner[j][4]*v_x + StencilSigns_Fluid2D_Corner[j][5]*v_y);
+    }
+    v_p = v[dof_p];
+    res_x += (1.0/12.0)*StencilSigns_Fluid2D_Corner[j][1]*v_p;
+    res_y += (1.0/12.0)*StencilSigns_Fluid2D_Corner[j][3]*v_p;
+    res_p += (1.0/18.0)*v_p;
+  }
+
+  // imediate neighbors (left,right,up,down)
+  #pragma unroll
+  for (int j=-1; j<=1; j+=2){
+    dof = DOFMap[PERIODICNUM_2D(row,col+j,rows,cols)]; dof_p = dof+nVelocityNodes*2;
+    if (dof<nVelocityNodes){
+      dof<<=1;
+      v_x = v[dof];
+      res_x += -v_x;
+      res_p += (j*1.0/3.0)*v_x;
+    }
+    v_p = v[dof_p];
+    res_x += (-j*1.0/3.0)*v_p;
+    res_p += (1.0/18.0)*v_p;
+  }
+  #pragma unroll
+  for (int j=-1; j<=1; j+=2){
+    dof = DOFMap[PERIODICNUM_2D(row+j,col,rows,cols)]; dof_p = dof+nVelocityNodes*2;
+    if (dof<nVelocityNodes){
+      dof<<=1;
+      v_y = v[dof+1];
+      res_y += -v_y;
+      res_p += (-j*1.0/3.0)*v_y;
+    }
+    v_p = v[dof_p];
+    res_y += (j*1.0/3.0)*v_p;
+    res_p += (1.0/18.0)*v_p;
+  }
+  
+  *q     = res_x;
+  *(++q) = res_y;
+  *(++q) = res_p;
+}
+//------------------------------------------------------------------------------
 __device__ void Preconditioner_fluid_2D_NodeByNode_Border(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
@@ -647,6 +746,184 @@ __device__ void Aprod_fluid_3D_NodeByNode_Pore(cudapcgIdMap_t id,
       dof = DOFMap[PERIODICNUM_3D(row-1,col,layer+1,rows,cols,layers)];   dof_p = dof+nVelocityNodes*3;
       APROD_FLUID_3D_PORE_NODE(7);
   }
+  *q     = res_x;
+  *(++q) = res_y;
+  *(++q) = res_z;
+  *(++q) = res_p;
+}
+//------------------------------------------------------------------------------
+__device__ void Preconditioner_fluid_3D_StencilByStencil_Pore(
+    cudapcgVar_t *q){
+  *q     = 0.28125;
+  *(++q) = 0.28125;
+  *(++q) = 0.28125;
+  *(++q) = -2.25;
+}
+//------------------------------------------------------------------------------
+static __constant__ char StencilSigns_Fluid3D_Corner[8][12]={
+  { 1, -1,  1,  1,  1, -1, -1,  1,  1, -1,  1, -1},
+  {-1, -1,  1, -1, -1,  1, -1, -1,  1, -1, -1, -1},
+  {-1,  1, -1, -1,  1, -1,  1,  1,  1,  1,  1, -1},
+  { 1,  1, -1,  1, -1,  1,  1, -1,  1,  1, -1, -1},
+  { 1,  1,  1,  1, -1, -1,  1, -1, -1, -1,  1,  1},
+  {-1,  1,  1, -1,  1,  1,  1,  1, -1, -1, -1,  1},
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1,  1,  1,  1},
+  { 1, -1, -1,  1,  1,  1, -1,  1, -1,  1, -1,  1}
+};
+//------------------------------------------------------------------------------ 
+__device__ void Aprod_fluid_3D_StencilByStencil_Pore(cudapcgIdMap_t id,
+    cudapcgVar_t * v, unsigned int nVelocityNodes, cudapcgIdMap_t *DOFMap, unsigned int rows, unsigned int cols, unsigned int layers, cudapcgVar_t * q){
+  // Local vars to store entries of v to be used on computations
+  cudapcgVar_t v_x, v_y, v_z, v_p;
+  // Local vars to store result
+  cudapcgVar_t res_x=0.0, res_y=0.0, res_z=0.0, res_p=0.0;
+  // Get row and col ids
+  int row = id%rows, col = (id%(rows*cols))/rows, layer = id/(rows*cols);
+  // Local var to store neighbor dof indexes
+  unsigned int dof, dof_p;
+  
+  // dof cache for stencil corners
+  cudapcgIdMap_t corner_dofs[8] = {
+    DOFMap[PERIODICNUM_3D(row-1,col-1,layer-1,rows,cols,layers)],
+    DOFMap[PERIODICNUM_3D(row+1,col-1,layer-1,rows,cols,layers)],
+    DOFMap[PERIODICNUM_3D(row-1,col+1,layer-1,rows,cols,layers)],
+    DOFMap[PERIODICNUM_3D(row+1,col+1,layer-1,rows,cols,layers)],
+    DOFMap[PERIODICNUM_3D(row-1,col-1,layer+1,rows,cols,layers)],
+    DOFMap[PERIODICNUM_3D(row+1,col-1,layer+1,rows,cols,layers)],
+    DOFMap[PERIODICNUM_3D(row-1,col+1,layer+1,rows,cols,layers)],
+    DOFMap[PERIODICNUM_3D(row+1,col+1,layer+1,rows,cols,layers)]
+  };
+
+  // center
+  dof = DOFMap[id]; dof_p = dof+nVelocityNodes*3; dof*=3;
+  res_x += (32.0/9.0)*v[dof];
+  res_y += (32.0/9.0)*v[dof+1];
+  res_z += (32.0/9.0)*v[dof+2];
+  res_p += -(4.0/9.0)*v[dof_p];
+
+  // corners
+  #pragma unroll
+  for (int j=0; j<8; j++){
+    dof = corner_dofs[j]; dof_p = dof+nVelocityNodes*3;
+    if (dof<nVelocityNodes){
+      dof*=3;
+      v_x = v[dof]; v_y = v[dof+1]; v_z = v[dof+2];
+      res_x += -(1.0/9.0)*v_x + (1.0/24.0)*(StencilSigns_Fluid3D_Corner[j][0]*v_y + StencilSigns_Fluid3D_Corner[j][1]*v_z);
+      res_y += -(1.0/9.0)*v_y + (1.0/24.0)*(StencilSigns_Fluid3D_Corner[j][3]*v_x + StencilSigns_Fluid3D_Corner[j][4]*v_z);
+      res_z += -(1.0/9.0)*v_z + (1.0/24.0)*(StencilSigns_Fluid3D_Corner[j][6]*v_x + StencilSigns_Fluid3D_Corner[j][7]*v_y);
+      res_p += (1.0/72.0)*(StencilSigns_Fluid3D_Corner[j][9]*v_x + StencilSigns_Fluid3D_Corner[j][10]*v_y + StencilSigns_Fluid3D_Corner[j][11]*v_z);
+    }
+    v_p = v[dof_p];
+    res_x += (1.0/72.0)*StencilSigns_Fluid3D_Corner[j][2]*v_p;
+    res_y += (1.0/72.0)*StencilSigns_Fluid3D_Corner[j][5]*v_p;
+    res_z += (1.0/72.0)*StencilSigns_Fluid3D_Corner[j][8]*v_p;
+    res_p += (1.0/72.0)*v_p;
+  }
+
+  // imediate neighbors (near,far,left,right,up,down)
+  #pragma unroll
+  for (int j=-1; j<=1; j+=2){
+    dof = DOFMap[PERIODICNUM_3D(row,col,layer+j,rows,cols,layers)]; dof_p = dof+nVelocityNodes*3;
+    if (dof<nVelocityNodes){
+      dof*=3;
+      v_x = v[dof]; v_y = v[dof+1]; v_z = v[dof+2];
+      res_x +=  (2.0/9.0)*v_x;
+      res_y +=  (2.0/9.0)*v_y;
+      res_z += -(4.0/9.0)*v_z;
+      res_p += (j*2.0/9.0)*v_z;
+    }
+    v_p = v[dof_p];
+    res_z += (-j*2.0/9.0)*v_p;
+  }
+  #pragma unroll
+  for (int j=-1; j<=1; j+=2){
+    dof = DOFMap[PERIODICNUM_3D(row,col+j,layer,rows,cols,layers)]; dof_p = dof+nVelocityNodes*3;
+    if (dof<nVelocityNodes){
+      dof*=3;
+      v_x = v[dof]; v_y = v[dof+1]; v_z = v[dof+2];
+      res_x += -(4.0/9.0)*v_x;
+      res_y +=  (2.0/9.0)*v_y;
+      res_z +=  (2.0/9.0)*v_z;
+      res_p += (j*2.0/9.0)*v_x;
+    }
+    v_p = v[dof_p];
+    res_x += (-j*2.0/9.0)*v_p;
+  }
+  #pragma unroll
+  for (int j=-1; j<=1; j+=2){
+    dof = DOFMap[PERIODICNUM_3D(row+j,col,layer,rows,cols,layers)]; dof_p = dof+nVelocityNodes*3;
+    if (dof<nVelocityNodes){
+      dof*=3;
+      v_x = v[dof]; v_y = v[dof+1]; v_z = v[dof+2];
+      res_x +=  (2.0/9.0)*v_x;
+      res_y += -(4.0/9.0)*v_y;
+      res_z +=  (2.0/9.0)*v_z;
+      res_p += (-j*2.0/9.0)*v_y;
+    }
+    v_p = v[dof_p];
+    res_y += (j*2.0/9.0)*v_p;
+  }
+
+  // x=0
+  for (int k=-1; k<=1; k+=2){
+    #pragma unroll
+    for (int j=-1; j<=1; j+=2){
+      dof = DOFMap[PERIODICNUM_3D(row+j,col,layer+k,rows,cols,layers)]; dof_p = dof+nVelocityNodes*3;
+      if (dof<nVelocityNodes){
+        dof*=3;
+        v_x = v[dof]; v_y = v[dof+1]; v_z = v[dof+2];
+        res_x += -(1.0/9.0)*v_x;
+        res_y += -(1.0/3.6)*v_y + (k*j)*(1.0/6.0)*v_z;
+        res_z += -(1.0/3.6)*v_z + (k*j)*(1.0/6.0)*v_y;
+        res_p += (-j*1.0/18.0)*v_y + (k*1.0/18.0)*v_z;
+      }
+      v_p = v[dof_p];
+      res_y +=  (j*1.0/18.0)*v_p;
+      res_z += (-k*1.0/18.0)*v_p;
+      res_p +=    (1.0/36.0)*v_p;
+    }
+  }
+
+  // y=0
+  for (int k=-1; k<=1; k+=2){
+    #pragma unroll
+    for (int j=-1; j<=1; j+=2){
+      dof = DOFMap[PERIODICNUM_3D(row,col+j,layer+k,rows,cols,layers)]; dof_p = dof+nVelocityNodes*3;
+      if (dof<nVelocityNodes){
+        dof*=3;
+        v_x = v[dof]; v_y = v[dof+1]; v_z = v[dof+2];
+        res_x += -(1.0/3.6)*v_x + (-k*j)*(1.0/6.0)*v_z;
+        res_y += -(1.0/9.0)*v_y;
+        res_z += -(1.0/3.6)*v_z + (-k*j)*(1.0/6.0)*v_x;
+        res_p += (j*1.0/18.0)*v_x + (k*1.0/18.0)*v_z;
+      }
+      v_p = v[dof_p];
+      res_x += (-j*1.0/18.0)*v_p;
+      res_z += (-k*1.0/18.0)*v_p;
+      res_p +=    (1.0/36.0)*v_p;
+    }
+  }
+
+  // z=0
+  for (int k=-1; k<=1; k+=2){
+    #pragma unroll
+    for (int j=-1; j<=1; j+=2){
+      dof = DOFMap[PERIODICNUM_3D(row+j,col+k,layer,rows,cols,layers)]; dof_p = dof+nVelocityNodes*3;
+      if (dof<nVelocityNodes){
+        dof*=3;
+        v_x = v[dof]; v_y = v[dof+1]; v_z = v[dof+2];
+        res_x += -(1.0/3.6)*v_x + (k*j)*(1.0/6.0)*v_y;
+        res_y += -(1.0/3.6)*v_y + (k*j)*(1.0/6.0)*v_x;
+        res_z += -(1.0/9.0)*v_z;
+        res_p += (k*1.0/18.0)*v_x + (-j*1.0/18.0)*v_y;
+      }
+      v_p = v[dof_p];
+      res_x += (-k*1.0/18.0)*v_p;
+      res_y +=  (j*1.0/18.0)*v_p;
+      res_p +=    (1.0/36.0)*v_p;
+    }
+  }
+
   *q     = res_x;
   *(++q) = res_y;
   *(++q) = res_z;
@@ -1232,7 +1509,7 @@ __global__ void kernel_applyPreConditioner_thermal_2D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, cudapcgVar_t * res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1243,7 +1520,7 @@ __global__ void kernel_applyPreConditioner_thermal_2D_NodeByNode(
         K,
       #endif
       material[i], &q);
-    res[i] = v1[i]*q + scl*v2[i];
+    res[i] = scl1*v1[i]*q + (v2 == NULL ? 0.0 : scl2*v2[i]);
   }
 }
 //------------------------------------------------------------------------------
@@ -1252,7 +1529,7 @@ __global__ void kernel_Aprod_thermal_2D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1267,8 +1544,161 @@ __global__ void kernel_Aprod_thermal_2D_NodeByNode(
       v, material[i], ny, nx, &res);
 
     // Put final result on global array
-    q[i] = scl*res + q[i]*isIncrement;
+    q[i] = scl*res + q[i]*scl_prev;
   }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 2D thermal analysis
+__global__ void kernel_PreConditionerAprod_thermal_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgMap_t matkey = material[i];
+
+    cudapcgVar_t res;
+    Aprod_thermal_2D_NodeByNode( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, &res);
+
+    cudapcgVar_t p;
+    Preconditioner_thermal_2D_NodeByNode(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      matkey, &p);
+
+    // Put final result on global array
+    res*=p;
+    q[i] = scl*res + q[i]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_thermal_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgMap_t *material, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q=0.0, vi= v1[gi];
+    vi*=(v2 == NULL ? vi : v2[gi]);
+    Preconditioner_thermal_2D_NodeByNode(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      material[gi], &q);
+      cache[li] = (double) (vi*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_thermal_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q=0.0;
+    Aprod_thermal_2D_NodeByNode( gi,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, material[gi], ny, nx, &q);
+      cache[li] = (double) (v[gi]*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_thermal_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q=0.0;
+    Aprod_thermal_2D_NodeByNode( gi,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, material[gi], ny, nx, &q);
+      cache[li] = (double) (q*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
 }
 //------------------------------------------------------------------------------
 
@@ -1313,7 +1743,7 @@ __global__ void kernel_applyPreConditioner_thermal_2D_ElemByElem(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1333,7 +1763,7 @@ __global__ void kernel_applyPreConditioner_thermal_2D_ElemByElem(
       #endif
       &materials_around_node[0], &q);
     
-    res[i] = v1[i]*q + scl*v2[i];
+    res[i] = scl1*v1[i]*q + (v2 == NULL ? 0.0 : scl2*v2[i]);
   }
 }
 //------------------------------------------------------------------------------
@@ -1392,7 +1822,7 @@ __global__ void kernel_applyPreConditioner_thermal_2D_ElemByElem_ScalarDensityFi
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1415,7 +1845,7 @@ __global__ void kernel_applyPreConditioner_thermal_2D_ElemByElem_ScalarDensityFi
       #endif
       &densities_around_node[0], &q);
     
-    res[i] = v1[i]*q + scl*v2[i];
+    res[i] = scl1*v1[i]*q + (v2 == NULL ? 0.0 : scl2*v2[i]);
   }
 }
 //------------------------------------------------------------------------------
@@ -1508,7 +1938,7 @@ __global__ void kernel_applyPreConditioner_thermal_3D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, cudapcgVar_t * res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1519,7 +1949,7 @@ __global__ void kernel_applyPreConditioner_thermal_3D_NodeByNode(
       K,
     #endif
     material[i], &q);
-    res[i] = v1[i]*q + scl*v2[i];
+    res[i] = scl1*v1[i]*q + (v2 == NULL ? 0.0 : scl2*v2[i]);
   }
 }
 //------------------------------------------------------------------------------
@@ -1528,7 +1958,7 @@ __global__ void kernel_Aprod_thermal_3D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1540,8 +1970,159 @@ __global__ void kernel_Aprod_thermal_3D_NodeByNode(
         K,
       #endif
       v, material[i], ny, nx, nz, &res);
-    q[i] = scl*res + q[i]*isIncrement;
+    q[i] = scl*res + q[i]*scl_prev;
   }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 3D thermal analysis
+__global__ void kernel_PreConditionerAprod_thermal_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgMap_t matkey = material[i];
+
+    cudapcgVar_t res;
+    Aprod_thermal_3D_NodeByNode_SparseQ1( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res);
+    cudapcgVar_t p;
+    Preconditioner_thermal_3D_NodeByNode_SparseQ1(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      K,
+    #endif
+    matkey, &p);
+
+    res*=p;
+    q[i] = scl*res + q[i]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_thermal_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgMap_t *material, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q=0.0, vi=v1[gi];
+    vi*=(v2 == NULL ? vi : v2[gi]);
+    Preconditioner_thermal_3D_NodeByNode_SparseQ1(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      material[gi], &q);
+      cache[li] = (double) (vi*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_thermal_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q=0.0;
+    Aprod_thermal_3D_NodeByNode_SparseQ1( gi,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, material[gi], ny, nx, nz, &q);
+      cache[li] = (double) (v[gi]*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_thermal_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q=0.0;
+    Aprod_thermal_3D_NodeByNode_SparseQ1( gi,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, material[gi], ny, nx, nz, &q);
+      cache[li] = (double) (q*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
 }
 //------------------------------------------------------------------------------
 
@@ -1592,7 +2173,7 @@ __global__ void kernel_applyPreConditioner_thermal_3D_ElemByElem(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz,  cudapcgVar_t *res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz,  cudapcgVar_t *res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1619,7 +2200,7 @@ __global__ void kernel_applyPreConditioner_thermal_3D_ElemByElem(
       #endif
       &materials_around_node[0], &q);
 
-    res[i] = v1[i]*q + v2[i]*scl;
+    res[i] = scl1*v1[i]*q + (v2 == NULL ? 0.0 : scl2*v2[i]);
   }
 }
 //------------------------------------------------------------------------------
@@ -1711,7 +2292,7 @@ __global__ void kernel_applyPreConditioner_thermal_3D_ElemByElem_ScalarDensityFi
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz,  cudapcgVar_t *res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz,  cudapcgVar_t *res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1741,7 +2322,7 @@ __global__ void kernel_applyPreConditioner_thermal_3D_ElemByElem_ScalarDensityFi
       #endif
       &densities_around_node[0], &q);
 
-    res[i] = v1[i]*q + v2[i]*scl;
+    res[i] = scl1*v1[i]*q + (v2 == NULL ? 0.0 : scl2*v2[i]);
   }
 }
 //------------------------------------------------------------------------------
@@ -1870,7 +2451,7 @@ __global__ void kernel_applyPreConditioner_elastic_2D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, cudapcgVar_t * res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1883,8 +2464,8 @@ __global__ void kernel_applyPreConditioner_elastic_2D_NodeByNode(
       #endif
       material[i], &q[0]);
 
-    res[2*i]   = v1[2*i]  *q[0] + scl*v2[2*i];
-    res[2*i+1] = v1[2*i+1]*q[1] + scl*v2[2*i+1];
+    res[2*i]   = scl1*  v1[2*i]*q[0] + (v2 == NULL ? 0.0 : scl2*  v2[2*i]);
+    res[2*i+1] = scl1*v1[2*i+1]*q[1] + (v2 == NULL ? 0.0 : scl2*v2[2*i+1]);
   }
 }
 //------------------------------------------------------------------------------
@@ -1893,7 +2474,7 @@ __global__ void kernel_Aprod_elastic_2D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1905,9 +2486,162 @@ __global__ void kernel_Aprod_elastic_2D_NodeByNode(
         K,
       #endif
       v, material[i], ny, nx, &res[0]);
-    q[2*i]   = scl*res[0] +   q[2*i]*isIncrement;
-    q[2*i+1] = scl*res[1] + q[2*i+1]*isIncrement;
+    q[2*i]   = scl*res[0] +   q[2*i]*scl_prev;
+    q[2*i+1] = scl*res[1] + q[2*i+1]*scl_prev;
   }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 2D elasticity analysis
+__global__ void kernel_PreConditionerAprod_elastic_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim/2){
+    cudapcgMap_t matkey = material[i];
+
+    cudapcgVar_t res[2];
+    Aprod_elastic_2D_NodeByNode( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, &res[0]);
+    cudapcgVar_t p[2];
+    Preconditioner_elastic_2D_NodeByNode(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      matkey, &p[0]);
+
+    res[0]*=p[0];
+    res[1]*=p[1]; 
+    q[2*i]   = scl*res[0] +   q[2*i]*scl_prev;
+    q[2*i+1] = scl*res[1] + q[2*i+1]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_elastic_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgMap_t *material, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim/2){
+    cudapcgVar_t q[2], vi[2]={v1[2*gi],v1[2*gi+1]};
+    vi[0]*=(v2 == NULL ? vi[0] : v2[2*gi]); vi[1]*=(v2 == NULL ? vi[1] : v2[2*gi+1]);
+    Preconditioner_elastic_2D_NodeByNode(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      material[gi], &q[0]);
+      cache[li] = (double) (vi[0]*q[0]+vi[1]*q[1]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_elastic_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim/2){
+    cudapcgVar_t q[2];
+    Aprod_elastic_2D_NodeByNode( gi,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, material[gi], ny, nx, &q[0]);
+      cache[li] = (double) (v[2*gi]*q[0] + v[2*gi+1]*q[1]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_elastic_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim/2){
+    cudapcgVar_t q[2];
+    Aprod_elastic_2D_NodeByNode( gi,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, material[gi], ny, nx, &q[0]);
+      cache[li] = (double) (q[0]*q[0] + q[1]*q[1]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
 }
 //------------------------------------------------------------------------------
 
@@ -1952,7 +2686,7 @@ __global__ void kernel_applyPreConditioner_elastic_2D_ElemByElem(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -1972,8 +2706,8 @@ __global__ void kernel_applyPreConditioner_elastic_2D_ElemByElem(
       #endif
       &materials_around_node[0], &q[0]);
 
-    res[2*i]   =   v1[2*i]*q[0] +   scl*v2[2*i];
-    res[2*i+1] = v1[2*i+1]*q[0] + scl*v2[2*i+1];
+    res[2*i]   = scl1*  v1[2*i]*q[0] + (v2 == NULL ? 0.0 : scl2*  v2[2*i]);
+    res[2*i+1] = scl1*v1[2*i+1]*q[1] + (v2 == NULL ? 0.0 : scl2*v2[2*i+1]);
   }
 }
 //------------------------------------------------------------------------------
@@ -2036,7 +2770,7 @@ __global__ void kernel_applyPreConditioner_elastic_2D_ElemByElem_ScalarDensityFi
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, cudapcgVar_t *res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2066,8 +2800,8 @@ __global__ void kernel_applyPreConditioner_elastic_2D_ElemByElem_ScalarDensityFi
       #endif
       &materials_around_node[0], &densities_around_node[0], &q[0]);
 
-    res[2*i]   =   v1[2*i]*q[0] +   scl*v2[2*i];
-    res[2*i+1] = v1[2*i+1]*q[0] + scl*v2[2*i+1];
+    res[2*i]   = scl1*  v1[2*i]*q[0] + (v2 == NULL ? 0.0 : scl2*  v2[2*i]);
+    res[2*i+1] = scl1*v1[2*i+1]*q[1] + (v2 == NULL ? 0.0 : scl2*v2[2*i+1]);
   }
 }
 //------------------------------------------------------------------------------
@@ -2169,7 +2903,7 @@ __global__ void kernel_applyPreConditioner_elastic_3D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, cudapcgVar_t * res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2181,9 +2915,10 @@ __global__ void kernel_applyPreConditioner_elastic_3D_NodeByNode(
         K,
       #endif
       material[i], &q[0]);
-    res[3*i]   = v1[3*i]  *q[0] + scl*v2[3*i];
-    res[3*i+1] = v1[3*i+1]*q[1] + scl*v2[3*i+1];
-    res[3*i+2] = v1[3*i+2]*q[2] + scl*v2[3*i+2];
+
+    res[3*i]   = scl1*  v1[3*i]*q[0] + (v2 == NULL ? 0.0 : scl2*  v2[3*i]);
+    res[3*i+1] = scl1*v1[3*i+1]*q[1] + (v2 == NULL ? 0.0 : scl2*v2[3*i+1]);
+    res[3*i+2] = scl1*v1[3*i+2]*q[2] + (v2 == NULL ? 0.0 : scl2*v2[3*i+2]);
   }
 }
 //------------------------------------------------------------------------------
@@ -2192,7 +2927,7 @@ __global__ void kernel_Aprod_elastic_3D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2204,10 +2939,165 @@ __global__ void kernel_Aprod_elastic_3D_NodeByNode(
         K,
       #endif
       v, material[i], ny, nx, nz, &res[0]);
-    q[3*i]   = scl*res[0] +   q[3*i]*isIncrement;
-    q[3*i+1] = scl*res[1] + q[3*i+1]*isIncrement;
-    q[3*i+2] = scl*res[2] + q[3*i+2]*isIncrement;
+    q[3*i]   = scl*res[0] +   q[3*i]*scl_prev;
+    q[3*i+1] = scl*res[1] + q[3*i+1]*scl_prev;
+    q[3*i+2] = scl*res[2] + q[3*i+2]*scl_prev;
   }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 3D elasticity analysis
+__global__ void kernel_PreConditionerAprod_elastic_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t *q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim/3){
+    cudapcgMap_t matkey = material[i];
+
+    cudapcgVar_t res[3];
+    Aprod_elastic_3D_NodeByNode( i,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, matkey, ny, nx, nz, &res[0]);
+    cudapcgVar_t p[3];
+    Preconditioner_elastic_3D_NodeByNode(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      matkey, &p[0]);
+
+    res[0]*=p[0];
+    res[1]*=p[1];
+    res[2]*=p[2];
+    q[3*i]   = scl*res[0] +   q[3*i]*scl_prev;
+    q[3*i+1] = scl*res[1] + q[3*i+1]*scl_prev;
+    q[3*i+2] = scl*res[2] + q[3*i+2]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_elastic_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgMap_t *material, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim/3){
+    cudapcgVar_t q[3], vi[3]={v1[3*gi],v1[3*gi+1],v1[3*gi+2]};
+    vi[0]*=(v2 == NULL ? vi[0] : v2[3*gi]); vi[1]*=(v2 == NULL ? vi[1] : v2[3*gi+1]); vi[2]*=(v2 == NULL ? vi[2] : v2[3*gi+2]);
+    Preconditioner_elastic_3D_NodeByNode(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      material[gi], &q[0]);
+      cache[li] = (double) (vi[0]*q[0]+vi[1]*q[1]+vi[2]*q[2]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_elastic_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim/3){
+    cudapcgVar_t q[3];
+    Aprod_elastic_3D_NodeByNode( gi,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, material[gi], ny, nx, nz, &q[0]);
+      cache[li] = (double) (v[3*gi]*q[0] + v[3*gi+1]*q[1] + v[3*gi+2]*q[2]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_elastic_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim/3){
+    cudapcgVar_t q[3];
+    Aprod_elastic_3D_NodeByNode( gi,
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, material[gi], ny, nx, nz, &q[0]);
+      cache[li] = (double) (q[0]*q[0] + q[1]*q[1] + q[2]*q[2]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
 }
 //------------------------------------------------------------------------------
 
@@ -2259,7 +3149,7 @@ __global__ void kernel_applyPreConditioner_elastic_3D_ElemByElem(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2285,9 +3175,9 @@ __global__ void kernel_applyPreConditioner_elastic_3D_ElemByElem(
       #endif
       &materials_around_node[0], &q[0]);
 
-    res[3*i]   =   v1[3*i]*q[0] +   scl*v2[3*i];
-    res[3*i+1] = v1[3*i+1]*q[1] + scl*v2[3*i+1];
-    res[3*i+2] = v1[3*i+2]*q[2] + scl*v2[3*i+2];
+    res[3*i]   = scl1*  v1[3*i]*q[0] + (v2 == NULL ? 0.0 : scl2*  v2[3*i]);
+    res[3*i+1] = scl1*v1[3*i+1]*q[1] + (v2 == NULL ? 0.0 : scl2*v2[3*i+1]);
+    res[3*i+2] = scl1*v1[3*i+2]*q[2] + (v2 == NULL ? 0.0 : scl2*v2[3*i+2]);
   }
 }
 //------------------------------------------------------------------------------
@@ -2396,7 +3286,7 @@ __global__ void kernel_applyPreConditioner_elastic_3D_ElemByElem_ScalarDensityFi
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res){
+    cudapcgVar_t * v1, cudapcgVar_t * v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgMap_t *material, parametricScalarField_t *field, double fmin, double fmax, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2436,9 +3326,9 @@ __global__ void kernel_applyPreConditioner_elastic_3D_ElemByElem_ScalarDensityFi
       #endif
       &materials_around_node[0], &densities_around_node[0], &q[0]);
 
-    res[3*i]   =   v1[3*i]*q[0] +   scl*v2[3*i];
-    res[3*i+1] = v1[3*i+1]*q[1] + scl*v2[3*i+1];
-    res[3*i+2] = v1[3*i+2]*q[2] + scl*v2[3*i+2];
+    res[3*i]   = scl1*  v1[3*i]*q[0] + (v2 == NULL ? 0.0 : scl2*  v2[3*i]);
+    res[3*i+1] = scl1*v1[3*i+1]*q[1] + (v2 == NULL ? 0.0 : scl2*v2[3*i+1]);
+    res[3*i+2] = scl1*v1[3*i+2]*q[2] + (v2 == NULL ? 0.0 : scl2*v2[3*i+2]);
   }
 }
 //------------------------------------------------------------------------------
@@ -2563,7 +3453,7 @@ __global__ void kernel_applyPreConditioner_fluid_2D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2579,8 +3469,8 @@ __global__ void kernel_applyPreConditioner_fluid_2D_NodeByNode(
             K,
           #endif
           &q[0]);
-        res[2*id]   = v[2*id]  *q[0];
-        res[2*id+1] = v[2*id+1]*q[1];
+        res[2*id]   = scl1*  v1[2*id]*q[0] + (v2 == NULL ? 0.0 : scl2*  v2[2*id]);
+        res[2*id+1] = scl1*v1[2*id+1]*q[1] + (v2 == NULL ? 0.0 : scl2*v2[2*id+1]);
       } else {
         Preconditioner_fluid_2D_NodeByNode_Border(
           #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
@@ -2588,7 +3478,7 @@ __global__ void kernel_applyPreConditioner_fluid_2D_NodeByNode(
           #endif
           fluidkey,&q[2]);
       }
-      res[id+nVelocityNodes*2] = v[id+nVelocityNodes*2]*q[2];
+      res[id+nVelocityNodes*2] = scl1*v1[id+nVelocityNodes*2]*q[2] + (v2 == NULL ? 0.0 : scl2*v2[id+nVelocityNodes*2]);
     }
   }
 }
@@ -2598,7 +3488,7 @@ __global__ void kernel_Aprod_fluid_2D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2616,8 +3506,8 @@ __global__ void kernel_Aprod_fluid_2D_NodeByNode(
           #endif
           v, nVelocityNodes, DOFMap, ny, nx, &res[0]);
         
-        q[2*id]   = scl*res[0] +   q[2*id]*isIncrement;
-        q[2*id+1] = scl*res[1] + q[2*id+1]*isIncrement;
+        q[2*id]   = scl*res[0] +   q[2*id]*scl_prev;
+        q[2*id+1] = scl*res[1] + q[2*id+1]*scl_prev;
       } else {
 
         Aprod_fluid_2D_NodeByNode_Border( i,
@@ -2627,9 +3517,182 @@ __global__ void kernel_Aprod_fluid_2D_NodeByNode(
         v, nVelocityNodes, fluidkey, DOFMap, ny, nx, &res[2]);
       }
       
-      q[id+nVelocityNodes*2] = scl*res[2] + q[id+nVelocityNodes*2]*isIncrement;
+      q[id+nVelocityNodes*2] = scl*res[2] + q[id+nVelocityNodes*2]*scl_prev;
     }
   }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[3], vi;
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Preconditioner_fluid_2D_NodeByNode_Pore(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          &q[0]);
+        vi = v1[2*id];
+        vi*=(v2 == NULL ? vi : v2[2*id]);
+        cache[li]  = (double) (vi*q[0]);
+        vi = v1[2*id+1];
+        vi*=(v2 == NULL ? vi : v2[2*id+1]);
+        cache[li] += (double) (vi*q[1]);
+      } else {
+        Preconditioner_fluid_2D_NodeByNode_Border(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          fluidkey,&q[2]);
+      }
+      vi = v1[id+nVelocityNodes*2];
+      vi*=(v2 == NULL ? vi : v2[id+nVelocityNodes*2]);
+      cache[li] += (double) (vi*q[2]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[3];
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Aprod_fluid_2D_NodeByNode_Pore( gi,
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v, nVelocityNodes, DOFMap, ny, nx, &q[0]);
+        
+        cache[li] = (double) (v[2*id]*q[0] + v[2*id+1]*q[1]);
+      } else {
+
+        Aprod_fluid_2D_NodeByNode_Border( gi,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, &q[2]);
+      }
+      cache[li] += (double) (v[id+nVelocityNodes*2]*q[2]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_2D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[3];
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Aprod_fluid_2D_NodeByNode_Pore( gi,
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v, nVelocityNodes, DOFMap, ny, nx, &q[0]);
+        
+        cache[li] = (double) (q[0]*q[0] + q[1]*q[1]);
+      } else {
+
+        Aprod_fluid_2D_NodeByNode_Border( gi,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, &q[2]);
+      }
+      cache[li] += (double) (q[2]*q[2]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
 }
 //------------------------------------------------------------------------------
 // Kernel to perform assembly-free preconditioner multiplication for 2D permeability analysis
@@ -2637,7 +3700,7 @@ __global__ void kernel_applyPreConditioner_fluid_2D_NodeByNode_Pore(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgVar_t * res){
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2648,9 +3711,9 @@ __global__ void kernel_applyPreConditioner_fluid_2D_NodeByNode_Pore(
         K,
       #endif
       &q[0]);
-    res[2*i]     = v[2*i]    *q[0];
-    res[2*i+1]   = v[2*i+1]  *q[1];
-    res[i+dim*2] = v[i+dim*2]*q[2];
+    res[2*i]     = scl1*    v1[2*i]*q[0] + (v2 == NULL ? 0.0 : scl2*    v2[2*i]);
+    res[2*i+1]   = scl1*  v1[2*i+1]*q[1] + (v2 == NULL ? 0.0 : scl2*  v2[2*i+1]);
+    res[i+dim*2] = scl1*v1[i+dim*2]*q[2] + (v2 == NULL ? 0.0 : scl2*v2[i+dim*2]);
   }
 }
 //------------------------------------------------------------------------------
@@ -2659,7 +3722,7 @@ __global__ void kernel_applyPreConditioner_fluid_2D_NodeByNode_Border(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2670,7 +3733,8 @@ __global__ void kernel_applyPreConditioner_fluid_2D_NodeByNode_Border(
         K,
       #endif
       FluidMap[i],&q);
-    res[i+nVelocityNodes*3] = v[i+nVelocityNodes*3]*q;
+    
+    res[i+nVelocityNodes*3] = scl1*v1[i+nVelocityNodes*3]*q + (v2 == NULL ? 0.0 : scl2*v2[i+nVelocityNodes*3]);
   }
 }
 //------------------------------------------------------------------------------
@@ -2679,7 +3743,7 @@ __global__ void kernel_Aprod_fluid_2D_NodeByNode_Pore(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2693,9 +3757,9 @@ __global__ void kernel_Aprod_fluid_2D_NodeByNode_Pore(
         #endif
         v, dim, DOFMap, ny, nx, &res[0]);
 
-      q[2*i]     = scl*res[0] +   q[2*i]*isIncrement;
-      q[2*i+1]   = scl*res[1] + q[2*i+1]*isIncrement;
-      q[i+dim*2] = scl*res[2] + q[i+dim*2]*isIncrement;
+      q[2*i]     = scl*res[0] +     q[2*i]*scl_prev;
+      q[2*i+1]   = scl*res[1] +   q[2*i+1]*scl_prev;
+      q[i+dim*2] = scl*res[2] + q[i+dim*2]*scl_prev;
   }
 }
 //------------------------------------------------------------------------------
@@ -2704,7 +3768,7 @@ __global__ void kernel_Aprod_fluid_2D_NodeByNode_Border(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2718,8 +3782,932 @@ __global__ void kernel_Aprod_fluid_2D_NodeByNode_Border(
         #endif
         v, nVelocityNodes, FluidMap[i], DOFMap, ny, nx, &res);
 
-      q[i+nVelocityNodes*3] = scl*res + q[i+nVelocityNodes*3]*isIncrement;
+      q[i+nVelocityNodes*3] = scl*res + q[i+nVelocityNodes*3]*scl_prev;
   }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 2D permeability analysis
+__global__ void kernel_PreConditionerAprod_fluid_2D_NodeByNode_Pore(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+
+      cudapcgVar_t res[3];
+
+      Aprod_fluid_2D_NodeByNode_Pore( NodeMap[i],
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, dim, DOFMap, ny, nx, &res[0]);
+
+      cudapcgVar_t p[3];
+      Preconditioner_fluid_2D_NodeByNode_Pore(
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        &p[0]);
+
+      res[0]*=p[0];
+      res[1]*=p[1];
+      res[2]*=p[2];
+      q[2*i]     = scl*res[0] +     q[2*i]*scl_prev;
+      q[2*i+1]   = scl*res[1] +   q[2*i+1]*scl_prev;
+      q[i+dim*2] = scl*res[2] + q[i+dim*2]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 2D permeability analysis
+__global__ void kernel_PreConditionerAprod_fluid_2D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+      cudapcgFlag_t fluidkey = FluidMap[i];
+
+      cudapcgVar_t res;
+      Aprod_fluid_2D_NodeByNode_Border( NodeMap[i+nVelocityNodes],
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, &res);
+
+    cudapcgVar_t p;
+    Preconditioner_fluid_2D_NodeByNode_Border(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      fluidkey,&p);
+
+      res*=p;
+      q[i+nVelocityNodes*3] = scl*res + q[i+nVelocityNodes*3]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_2D_NodeByNode_Pore(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[3], vi;
+    Preconditioner_fluid_2D_NodeByNode_Pore(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      &q[0]);
+    vi = v1[2*gi];
+    vi*=(v2 == NULL ? vi : v2[2*gi]);
+    cache[li]  = (double) (vi*q[0]);
+    vi = v1[2*gi+1];
+    vi*=(v2 == NULL ? vi : v2[2*gi+1]);
+    cache[li] += (double) (vi*q[1]);
+    vi = v1[gi+dim*2];
+    vi*=(v2 == NULL ? vi : v2[gi+dim*2]);
+    cache[li] += (double) (vi*q[2]); 
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_2D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q, vi;
+    Preconditioner_fluid_2D_NodeByNode_Border(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      FluidMap[gi],&q);
+    vi = v1[gi+nVelocityNodes*3];
+    vi*=(v2 == NULL ? vi : v2[gi+nVelocityNodes*3]);
+    cache[li] = (double) (vi*q); 
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_2D_NodeByNode_Pore(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[3];
+    Aprod_fluid_2D_NodeByNode_Pore( NodeMap[gi],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, dim, DOFMap, ny, nx, &q[0]);
+    cache[li] = (double) (v[2*gi]*q[0] + v[2*gi+1]*q[1] + v[gi+dim*2]*q[2]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_2D_NodeByNode_Pore(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[3];
+    Aprod_fluid_2D_NodeByNode_Pore( NodeMap[gi],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, dim, DOFMap, ny, nx, &q[0]);
+    cache[li] = (double) (q[0]*q[0] + q[1]*q[1] + q[2]*q[2]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_2D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q;
+    Aprod_fluid_2D_NodeByNode_Border( NodeMap[gi+nVelocityNodes],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, nVelocityNodes, FluidMap[gi], DOFMap, ny, nx, &q);
+      cache[li] = (double) (v[gi+nVelocityNodes*3]*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_2D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q;
+    Aprod_fluid_2D_NodeByNode_Border( NodeMap[gi+nVelocityNodes],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, nVelocityNodes, FluidMap[gi], DOFMap, ny, nx, &q);
+      cache[li] = (double) (q*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,M^-1*A*v)
+__global__ void kernel_dotPreConditionerA2prod_fluid_2D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    cudapcgVar_t q;
+    Aprod_fluid_2D_NodeByNode_Border( NodeMap[gi+nVelocityNodes],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, nVelocityNodes, fluidkey, DOFMap, ny, nx, &q);
+    cudapcgVar_t p;
+    Preconditioner_fluid_2D_NodeByNode_Border(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      fluidkey,&p);
+      cache[li] = (double) (q*p*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+
+//---------------------------------
+///////////////////////////////////
+/////// STENCIL-BY-STENCIL ////////
+///////////////////////////////////
+//---------------------------------
+
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 2D permeability analysis
+__global__ void kernel_applyPreConditioner_fluid_2D_StencilByStencil(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgFlag_t fluidkey = FluidMap[i];
+    if (fluidkey){
+      cudapcgVar_t q;
+      cudapcgIdMap_t id = DOFMap[i];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        res[2*id]   = scl1*  v1[2*id]*0.25 + (v2 == NULL ? 0.0 : scl2*  v2[2*id]);
+        res[2*id+1] = scl1*v1[2*id+1]*0.25 + (v2 == NULL ? 0.0 : scl2*v2[2*id+1]);
+        q=-2.25;
+      } else {
+        q = -9.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) );
+      }
+      res[id+nVelocityNodes*2] = scl1*v1[id+nVelocityNodes*2]*q + (v2 == NULL ? 0.0 : scl2*v2[id+nVelocityNodes*2]);
+    }
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 2D permeability analysis
+__global__ void kernel_Aprod_fluid_2D_StencilByStencil(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgFlag_t fluidkey = FluidMap[i];
+    if (fluidkey){
+      cudapcgVar_t res[3];
+      cudapcgIdMap_t id = DOFMap[i];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        
+        Aprod_fluid_2D_StencilByStencil_Pore( i, v, dim, DOFMap, ny, nx, &res[0]);
+        
+        q[2*id]   = scl*res[0] +   q[2*id]*scl_prev;
+        q[2*id+1] = scl*res[1] + q[2*id+1]*scl_prev;
+      } else {
+
+        Aprod_fluid_2D_NodeByNode_Border( i,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, &res[2]);
+      }
+      
+      q[id+nVelocityNodes*2] = scl*res[2] + q[id+nVelocityNodes*2]*scl_prev;
+    }
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_2D_StencilByStencil(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q, vi;
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        vi = v1[2*id];
+        vi*=(v2 == NULL ? vi : v2[2*id]);
+        cache[li]  = (double) (vi*0.25);
+        vi = v1[2*id+1];
+        vi*=(v2 == NULL ? vi : v2[2*id+1]);
+        cache[li] += (double) (vi*0.25);
+        q = -2.25;
+      } else {
+        q = -9.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) );
+      }
+      vi = v1[id+nVelocityNodes*2];
+      vi*=(v2 == NULL ? vi : v2[id+nVelocityNodes*2]);
+      cache[li] += (double) (vi*q);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_2D_StencilByStencil(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[3];
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Aprod_fluid_2D_StencilByStencil_Pore( gi, v, dim, DOFMap, ny, nx, &q[0]);
+        
+        cache[li] = (double) (v[2*id]*q[0] + v[2*id+1]*q[1]);
+      } else {
+
+        Aprod_fluid_2D_NodeByNode_Border( gi,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, &q[2]);
+      }
+      cache[li] += (double) (v[id+nVelocityNodes*2]*q[2]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_2D_StencilByStencil(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[3];
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Aprod_fluid_2D_StencilByStencil_Pore( gi, v, dim, DOFMap, ny, nx, &q[0]);
+        
+        cache[li] = (double) (q[0]*q[0] + q[1]*q[1]);
+      } else {
+
+        Aprod_fluid_2D_NodeByNode_Border( gi,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, &q[2]);
+      }
+      cache[li] += (double) (q[2]*q[2]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 2D permeability analysis
+__global__ void kernel_applyPreConditioner_fluid_2D_StencilByStencil_Pore(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    res[2*i]     = scl1*    v1[2*i]* 0.25 + (v2 == NULL ? 0.0 : scl2*    v2[2*i]);
+    res[2*i+1]   = scl1*  v1[2*i+1]* 0.25 + (v2 == NULL ? 0.0 : scl2*  v2[2*i+1]);
+    res[i+dim*2] = scl1*v1[i+dim*2]*-2.25 + (v2 == NULL ? 0.0 : scl2*v2[i+dim*2]);
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 2D permeability analysis
+__global__ void kernel_applyPreConditioner_fluid_2D_StencilByStencil_Border(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgFlag_t fluidkey = FluidMap[i];
+    cudapcgVar_t q = -9.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) );
+    res[i+nVelocityNodes*3] = scl1*v1[i+nVelocityNodes*3]*q + (v2 == NULL ? 0.0 : scl2*v2[i+nVelocityNodes*3]);
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 2D permeability analysis
+__global__ void kernel_applyinvPreConditioner_fluid_2D_StencilByStencil_Pore(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    res[2*i]     = scl1*    v1[2*i]*4.0         + (v2 == NULL ? 0.0 : scl2*    v2[2*i]);
+    res[2*i+1]   = scl1*  v1[2*i+1]*4.0         + (v2 == NULL ? 0.0 : scl2*  v2[2*i+1]);
+    res[i+dim*2] = scl1*v1[i+dim*2]*(1.0/-2.25) + (v2 == NULL ? 0.0 : scl2*v2[i+dim*2]);
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 2D permeability analysis
+__global__ void kernel_applyinvPreConditioner_fluid_2D_StencilByStencil_Border(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgFlag_t fluidkey = FluidMap[i];
+    cudapcgVar_t q = (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) ) / -9.0;
+    res[i+nVelocityNodes*3] = scl1*v1[i+nVelocityNodes*3]*q + (v2 == NULL ? 0.0 : scl2*v2[i+nVelocityNodes*3]);
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 2D permeability analysis
+__global__ void kernel_Aprod_fluid_2D_StencilByStencil_Pore(
+    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+
+      cudapcgVar_t res[3];
+      Aprod_fluid_2D_StencilByStencil_Pore( NodeMap[i], v, dim, DOFMap, ny, nx, &res[0]);
+
+      q[2*i]     = scl*res[0] +     q[2*i]*scl_prev;
+      q[2*i+1]   = scl*res[1] +   q[2*i+1]*scl_prev;
+      q[i+dim*2] = scl*res[2] + q[i+dim*2]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 2D permeability analysis
+__global__ void kernel_PreConditionerAprod_fluid_2D_StencilByStencil_Pore(
+    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+
+      cudapcgVar_t res[3];
+      Aprod_fluid_2D_StencilByStencil_Pore( NodeMap[i], v, dim, DOFMap, ny, nx, &res[0]);
+
+      res[0]*= 0.25;
+      res[1]*= 0.25;
+      res[2]*=-2.25;
+      q[2*i]     = scl*res[0] +     q[2*i]*scl_prev;
+      q[2*i+1]   = scl*res[1] +   q[2*i+1]*scl_prev;
+      q[i+dim*2] = scl*res[2] + q[i+dim*2]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_2D_StencilByStencil_Pore(
+  cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t vi, lcl;
+    vi = v1[2*gi];
+    vi*=(v2 == NULL ? vi : v2[2*gi]);
+    lcl  = (double) (vi* 0.25);
+    vi = v1[2*gi+1];
+    vi*=(v2 == NULL ? vi : v2[2*gi+1]);
+    lcl += (double) (vi* 0.25);
+    vi = v1[gi+dim*2];
+    vi*=(v2 == NULL ? vi : v2[gi+dim*2]);
+    lcl += (double) (vi*-2.25); 
+    cache[li] = lcl;
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_2D_StencilByStencil_Border(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    cudapcgVar_t vi, q = -9.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) );
+    vi = v1[gi+nVelocityNodes*3];
+    vi*=(v2 == NULL ? vi : v2[gi+nVelocityNodes*3]);
+    cache[li] = (double) (vi*q); 
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,M*v)
+__global__ void kernel_dotinvPreConditioner_fluid_2D_StencilByStencil_Pore(
+  cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t vi, lcl;
+    vi = v1[2*gi];
+    vi*=(v2 == NULL ? vi : v2[2*gi]);
+    lcl  = (double) (vi* 4.0);
+    vi = v1[2*gi+1];
+    vi*=(v2 == NULL ? vi : v2[2*gi+1]);
+    lcl += (double) (vi* 4.0);
+    vi = v1[gi+dim*2];
+    vi*=(v2 == NULL ? vi : v2[gi+dim*2]);
+    lcl += (double) (vi*(4.0/9.0)); 
+    cache[li] = lcl;
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,M*v)
+__global__ void kernel_dotinvPreConditioner_fluid_2D_StencilByStencil_Border(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    cudapcgVar_t vi, q = -9.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) );
+    vi = v1[gi+nVelocityNodes*3];
+    vi*=(v2 == NULL ? vi : v2[gi+nVelocityNodes*3]);
+    cache[li] = (double) (vi/q); 
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_2D_StencilByStencil_Pore(
+    cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[3];
+    Aprod_fluid_2D_StencilByStencil_Pore( NodeMap[gi], v, dim, DOFMap, ny, nx, &q[0]);
+    cache[li] = (double) (v[2*gi]*q[0] + v[2*gi+1]*q[1] + v[gi+dim*2]*q[2]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_2D_StencilByStencil_Pore(
+    cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[3];
+    Aprod_fluid_2D_StencilByStencil_Pore( NodeMap[gi], v, dim, DOFMap, ny, nx, &q[0]);
+    cache[li] = (double) (q[0]*q[0] + q[1]*q[1] + q[2]*q[2]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,M^-1*A*v)
+__global__ void kernel_dotPreConditionerA2prod_fluid_2D_StencilByStencil_Pore(
+    cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[3];
+    Aprod_fluid_2D_StencilByStencil_Pore( NodeMap[gi], v, dim, DOFMap, ny, nx, &q[0]);
+    cache[li] = (double) (q[0]*q[0]*0.25 + q[1]*q[1]*0.25 + q[2]*q[2]*-2.25);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
 }
 //------------------------------------------------------------------------------
 
@@ -2741,7 +4729,7 @@ __global__ void kernel_applyPreConditioner_fluid_3D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2757,9 +4745,9 @@ __global__ void kernel_applyPreConditioner_fluid_3D_NodeByNode(
             K,
           #endif
           &q[0]);
-        res[3*id]   = v[3*id]  *q[0];
-        res[3*id+1] = v[3*id+1]*q[1];
-        res[3*id+2] = v[3*id+2]*q[2];
+        res[3*id]   = scl1*  v1[3*id]*q[0] + (v2 == NULL ? 0.0 : scl2*  v2[3*id]);
+        res[3*id+1] = scl1*v1[3*id+1]*q[1] + (v2 == NULL ? 0.0 : scl2*v2[3*id+1]);
+        res[3*id+2] = scl1*v1[3*id+2]*q[2] + (v2 == NULL ? 0.0 : scl2*v2[3*id+2]);
       } else {
         Preconditioner_fluid_3D_NodeByNode_Border(
           #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
@@ -2767,7 +4755,7 @@ __global__ void kernel_applyPreConditioner_fluid_3D_NodeByNode(
           #endif
           fluidkey,&q[3]);
       }
-      res[id+nVelocityNodes*3] = v[id+nVelocityNodes*3]*q[3];
+      res[id+nVelocityNodes*3] = scl1*v1[id+nVelocityNodes*3]*q[3] + (v2 == NULL ? 0.0 : scl2*v2[id+nVelocityNodes*3]);
     }
   }
 }
@@ -2777,7 +4765,7 @@ __global__ void kernel_Aprod_fluid_3D_NodeByNode(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2795,9 +4783,9 @@ __global__ void kernel_Aprod_fluid_3D_NodeByNode(
           #endif
           v, nVelocityNodes, DOFMap, ny, nx, nz, &res[0]);
         
-        q[3*id]   = scl*res[0] +   q[3*id]*isIncrement;
-        q[3*id+1] = scl*res[1] + q[3*id+1]*isIncrement;
-        q[3*id+2] = scl*res[2] + q[3*id+2]*isIncrement;
+        q[3*id]   = scl*res[0] +   q[3*id]*scl_prev;
+        q[3*id+1] = scl*res[1] + q[3*id+1]*scl_prev;
+        q[3*id+2] = scl*res[2] + q[3*id+2]*scl_prev;
         
       } else {
 
@@ -2808,9 +4796,185 @@ __global__ void kernel_Aprod_fluid_3D_NodeByNode(
         v, nVelocityNodes, fluidkey, DOFMap, ny, nx, nz, &res[3]);
       }
       
-      q[id+nVelocityNodes*3] = scl*res[3] + q[id+nVelocityNodes*3]*isIncrement;
+      q[id+nVelocityNodes*3] = scl*res[3] + q[id+nVelocityNodes*3]*scl_prev;
     }
   }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[4], vi;
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Preconditioner_fluid_3D_NodeByNode_Pore(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          &q[0]);
+        vi = v1[3*id];
+        vi*=(v2 == NULL ? vi : v2[3*id]);
+        cache[li]  = (double) (vi*q[0]);
+        vi = v1[3*id+1];
+        vi*=(v2 == NULL ? vi : v2[3*id+1]);
+        cache[li] += (double) (vi*q[1]);
+        vi = v1[3*id+2];
+        vi*=(v2 == NULL ? vi : v2[3*id+2]);
+        cache[li] += (double) (vi*q[2]);
+      } else {
+        Preconditioner_fluid_3D_NodeByNode_Border(
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          fluidkey,&q[3]);
+      }
+      vi = v1[id+nVelocityNodes*3];
+      vi*=(v2 == NULL ? vi : v2[id+nVelocityNodes*3]);
+      cache[li] += (double) (vi*q[3]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[4];
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Aprod_fluid_3D_NodeByNode_Pore( gi,
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v, nVelocityNodes, DOFMap, ny, nx, nz, &q[0]);
+        
+        cache[li] = (double) (v[3*id]*q[0] + v[3*id+1]*q[1] + v[3*id+2]*q[2]);
+      } else {
+
+        Aprod_fluid_3D_NodeByNode_Border( gi,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, nz, &q[3]);
+      }
+      cache[li] += (double) (v[id+nVelocityNodes*3]*q[3]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_3D_NodeByNode(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[4];
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Aprod_fluid_3D_NodeByNode_Pore( gi,
+          #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+            K,
+          #endif
+          v, nVelocityNodes, DOFMap, ny, nx, nz, &q[0]);
+        
+        cache[li] = (double) (q[0]*q[0] + q[1]*q[1] + q[2]*q[2]);
+      } else {
+
+        Aprod_fluid_3D_NodeByNode_Border( gi,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, nz, &q[3]);
+      }
+      cache[li] += (double) (q[3]*q[3]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
 }
 //------------------------------------------------------------------------------
 // Kernel to perform assembly-free preconditioner multiplication for 3D permeability analysis
@@ -2818,7 +4982,7 @@ __global__ void kernel_applyPreConditioner_fluid_3D_NodeByNode_Pore(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgVar_t * res){
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2829,10 +4993,10 @@ __global__ void kernel_applyPreConditioner_fluid_3D_NodeByNode_Pore(
         K,
       #endif
       &q[0]);
-    res[3*i]     = v[3*i]    *q[0];
-    res[3*i+1]   = v[3*i+1]  *q[1];
-    res[3*i+2]   = v[3*i+2]  *q[2];
-    res[i+dim*3] = v[i+dim*3]*q[3];
+    res[3*i]     = scl1*    v1[3*i]*q[0] + (v2 == NULL ? 0.0 : scl2*    v2[3*i]);
+    res[3*i+1]   = scl1*  v1[3*i+1]*q[1] + (v2 == NULL ? 0.0 : scl2*  v2[3*i+1]);
+    res[3*i+2]   = scl1*  v1[3*i+2]*q[2] + (v2 == NULL ? 0.0 : scl2*  v2[3*i+2]);
+    res[i+dim*3] = scl1*v1[i+dim*3]*q[3] + (v2 == NULL ? 0.0 : scl2*v2[i+dim*3]);
   }
 }
 //------------------------------------------------------------------------------
@@ -2841,7 +5005,7 @@ __global__ void kernel_applyPreConditioner_fluid_3D_NodeByNode_Border(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2853,7 +5017,7 @@ __global__ void kernel_applyPreConditioner_fluid_3D_NodeByNode_Border(
         K,
       #endif
       fluidkey,&q);
-    res[i+nVelocityNodes*4] = v[i+nVelocityNodes*4]*q;
+    res[i+nVelocityNodes*4] = scl1*v1[i+nVelocityNodes*4]*q + (v2 == NULL ? 0.0 : scl2*v2[i+nVelocityNodes*4]);
   }
 }
 //------------------------------------------------------------------------------ 
@@ -2861,7 +5025,7 @@ __global__ void kernel_Aprod_fluid_3D_NodeByNode_Pore(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2874,10 +5038,10 @@ __global__ void kernel_Aprod_fluid_3D_NodeByNode_Pore(
       #endif
       v, dim, DOFMap, ny, nx, nz, &res[0]);
 
-    q[3*i]     = scl*res[0] +     q[3*i]*isIncrement;
-    q[3*i+1]   = scl*res[1] +   q[3*i+1]*isIncrement;
-    q[3*i+2]   = scl*res[2] +   q[3*i+2]*isIncrement;
-    q[i+dim*3] = scl*res[3] + q[i+dim*3]*isIncrement;
+    q[3*i]     = scl*res[0] +     q[3*i]*scl_prev;
+    q[3*i+1]   = scl*res[1] +   q[3*i+1]*scl_prev;
+    q[3*i+2]   = scl*res[2] +   q[3*i+2]*scl_prev;
+    q[i+dim*3] = scl*res[3] + q[i+dim*3]*scl_prev;
   }
 }
 //------------------------------------------------------------------------------ 
@@ -2886,7 +5050,7 @@ __global__ void kernel_Aprod_fluid_3D_NodeByNode_Border(
     #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
       cudapcgVar_t *K,
     #endif
-    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgFlag_t isIncrement){
+    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
   // Get global thread index
   unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
   // Check if this thread must work
@@ -2899,7 +5063,946 @@ __global__ void kernel_Aprod_fluid_3D_NodeByNode_Border(
       #endif
       v, nVelocityNodes, FluidMap[i], DOFMap, ny, nx, nz, &res);
 
-    q[i+nVelocityNodes*4] = scl*res + q[i+nVelocityNodes*4]*isIncrement;
+    q[i+nVelocityNodes*4] = scl*res + q[i+nVelocityNodes*4]*scl_prev;
   }
+}
+//------------------------------------------------------------------------------ 
+__global__ void kernel_PreConditionerAprod_fluid_3D_NodeByNode_Pore(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+
+    cudapcgVar_t res[4];
+    Aprod_fluid_3D_NodeByNode_Pore( NodeMap[i],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, dim, DOFMap, ny, nx, nz, &res[0]);
+
+    cudapcgVar_t p[4];
+    Preconditioner_fluid_3D_NodeByNode_Pore(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      &p[0]);
+
+    res[0]*=p[0];
+    res[1]*=p[1];
+    res[2]*=p[2];
+    res[3]*=p[3];
+    q[3*i]     = scl*res[0] +     q[3*i]*scl_prev;
+    q[3*i+1]   = scl*res[1] +   q[3*i+1]*scl_prev;
+    q[3*i+2]   = scl*res[2] +   q[3*i+2]*scl_prev;
+    q[i+dim*3] = scl*res[3] + q[i+dim*3]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------ 
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 3D permeability analysis
+__global__ void kernel_PreConditionerAprod_fluid_3D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgFlag_t fluidkey = FluidMap[i];
+
+    cudapcgVar_t res;
+    Aprod_fluid_3D_NodeByNode_Border( NodeMap[i+nVelocityNodes],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, nVelocityNodes, fluidkey, DOFMap, ny, nx, nz, &res);
+
+    cudapcgVar_t p;
+    Preconditioner_fluid_3D_NodeByNode_Border(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      fluidkey,&p);
+    
+    res*=p;
+    q[i+nVelocityNodes*4] = scl*res + q[i+nVelocityNodes*4]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_3D_NodeByNode_Pore(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[4], vi;
+    Preconditioner_fluid_3D_NodeByNode_Pore(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      &q[0]);
+    vi = v1[3*gi];
+    vi*=(v2 == NULL ? vi : v2[3*gi]);
+    cache[li]  = (double) (vi*q[0]);
+    vi = v1[3*gi+1];
+    vi*=(v2 == NULL ? vi : v2[3*gi+1]);
+    cache[li] += (double) (vi*q[1]);
+    vi = v1[3*gi+2];
+    vi*=(v2 == NULL ? vi : v2[3*gi+2]);
+    cache[li] += (double) (vi*q[2]);
+    vi = v1[gi+dim*3];
+    vi*=(v2 == NULL ? vi : v2[gi+dim*3]);
+    cache[li] += (double) (vi*q[3]); 
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_3D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q, vi;
+    Preconditioner_fluid_3D_NodeByNode_Border(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      FluidMap[gi],&q);
+    vi = v1[gi+nVelocityNodes*4];
+    vi*=(v2 == NULL ? vi : v2[gi+nVelocityNodes*4]);
+    cache[li] = (double) (vi*q); 
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_3D_NodeByNode_Pore(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[4];
+    Aprod_fluid_3D_NodeByNode_Pore( NodeMap[gi],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, dim, DOFMap, ny, nx, nz, &q[0]);
+      cache[li] = (double) (v[3*gi]*q[0] + v[3*gi+1]*q[1] + v[3*gi+2]*q[2] + v[gi+dim*3]*q[3]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_3D_NodeByNode_Pore(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[4];
+    Aprod_fluid_3D_NodeByNode_Pore( NodeMap[gi],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, dim, DOFMap, ny, nx, nz, &q[0]);
+      cache[li] = (double) (q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_3D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q;
+    Aprod_fluid_3D_NodeByNode_Border( NodeMap[gi+nVelocityNodes],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, nVelocityNodes, FluidMap[gi], DOFMap, ny, nx, nz, &q);
+      cache[li] = (double) (v[gi+nVelocityNodes*4]*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_3D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q;
+    Aprod_fluid_3D_NodeByNode_Border( NodeMap[gi+nVelocityNodes],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, nVelocityNodes, FluidMap[gi], DOFMap, ny, nx, nz, &q);
+      cache[li] = (double) (q*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,M^-1*A*v)
+__global__ void kernel_dotPreConditionerA2prod_fluid_3D_NodeByNode_Border(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    cudapcgVar_t q;
+    Aprod_fluid_3D_NodeByNode_Border( NodeMap[gi+nVelocityNodes],
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      v, nVelocityNodes, fluidkey, DOFMap, ny, nx, nz, &q);
+    cudapcgVar_t p;
+    Preconditioner_fluid_3D_NodeByNode_Border(
+      #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+        K,
+      #endif
+      fluidkey,&p);
+    cache[li] = (double) (q*p*q);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+
+//---------------------------------
+///////////////////////////////////
+/////// STENCIL-BY-STENCIL ////////
+///////////////////////////////////
+//---------------------------------
+
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 3D permeability analysis
+__global__ void kernel_applyPreConditioner_fluid_3D_StencilByStencil(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgFlag_t fluidkey = FluidMap[i];
+    if (fluidkey){
+      cudapcgIdMap_t id = DOFMap[i];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        res[3*id]   = scl1*  v1[3*id]* 0.28125 + (v2 == NULL ? 0.0 : scl2*  v2[3*id]);
+        res[3*id+1] = scl1*v1[3*id+1]* 0.28125 + (v2 == NULL ? 0.0 : scl2*v2[3*id+1]);
+        res[3*id+2] = scl1*v1[3*id+2]* 0.28125 + (v2 == NULL ? 0.0 : scl2*v2[3*id+2]);
+        res[id+nVelocityNodes*3] = scl1*v1[id+nVelocityNodes*3]*-2.25 + (v2 == NULL ? 0.0 : scl2*v2[id+nVelocityNodes*3]);
+      } else {
+        cudapcgVar_t q = -18.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) + ((fluidkey>>4)&1) + ((fluidkey>>5)&1) + ((fluidkey>>6)&1) + ((fluidkey>>7)&1) );
+        res[id+nVelocityNodes*3] = scl1*v1[id+nVelocityNodes*3]*q + (v2 == NULL ? 0.0 : scl2*v2[id+nVelocityNodes*3]);
+      }
+    }
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform "assembly on-the-fly" matrix-vector product, for 3D permeability analysis
+__global__ void kernel_Aprod_fluid_3D_StencilByStencil(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t * v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgFlag_t fluidkey = FluidMap[i];
+    if (fluidkey){
+      cudapcgVar_t res[4];
+      cudapcgIdMap_t id = DOFMap[i];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        
+        Aprod_fluid_3D_StencilByStencil_Pore( i, v, nVelocityNodes, DOFMap, ny, nx, nz, &res[0]);
+        
+        q[3*id]   = scl*res[0] +   q[3*id]*scl_prev;
+        q[3*id+1] = scl*res[1] + q[3*id+1]*scl_prev;
+        q[3*id+2] = scl*res[2] + q[3*id+2]*scl_prev;
+        
+      } else {
+
+        Aprod_fluid_3D_NodeByNode_Border( i,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, nz, &res[3]);
+      }
+      
+      q[id+nVelocityNodes*3] = scl*res[3] + q[id+nVelocityNodes*3]*scl_prev;
+    }
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_3D_StencilByStencil(
+  cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q, vi;
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        vi = v1[3*id];
+        vi*=(v2 == NULL ? vi : v2[3*id]);
+        cache[li]  = (double) (vi*0.28125);
+        vi = v1[3*id+1];
+        vi*=(v2 == NULL ? vi : v2[3*id+1]);
+        cache[li] += (double) (vi*0.28125);
+        vi = v1[3*id+2];
+        vi*=(v2 == NULL ? vi : v2[3*id+2]);
+        cache[li] += (double) (vi*0.28125);
+        q = -2.25;
+      } else {
+        q = -18.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) + ((fluidkey>>4)&1) + ((fluidkey>>5)&1) + ((fluidkey>>6)&1) + ((fluidkey>>7)&1) );
+      }
+      vi = v1[id+nVelocityNodes*3];
+      vi*=(v2 == NULL ? vi : v2[id+nVelocityNodes*3]);
+      cache[li] += (double) (vi*q);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_3D_StencilByStencil(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[4];
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Aprod_fluid_3D_StencilByStencil_Pore( gi, v, nVelocityNodes, DOFMap, ny, nx, nz, &q[0]);
+        
+        cache[li] = (double) (v[3*id]*q[0] + v[3*id+1]*q[1] + v[3*id+2]*q[2]);
+      } else {
+
+        Aprod_fluid_3D_NodeByNode_Border( gi,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, nz, &q[3]);
+      }
+      cache[li] += (double) (v[id+nVelocityNodes*3]*q[3]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_3D_StencilByStencil(
+    #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+      cudapcgVar_t *K,
+    #endif
+    cudapcgVar_t *v, unsigned int dim, cudapcgFlag_t *FluidMap, cudapcgIdMap_t *DOFMap, unsigned int nVelocityNodes, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  cache[li] = 0.0;
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    if (fluidkey){
+      cudapcgVar_t q[4];
+      cudapcgIdMap_t id = DOFMap[gi];
+      // Velocity DOFs
+      if (id < nVelocityNodes){
+        Aprod_fluid_3D_StencilByStencil_Pore( gi, v, nVelocityNodes, DOFMap, ny, nx, nz, &q[0]);
+        
+        cache[li] = (double) (q[0]*q[0] + q[1]*q[1] + q[2]*q[2]);
+      } else {
+
+        Aprod_fluid_3D_NodeByNode_Border( gi,
+        #if defined CUDAPCG_MATKEY_32BIT || defined CUDAPCG_MATKEY_64BIT
+          K,
+        #endif
+        v, nVelocityNodes, fluidkey, DOFMap, ny, nx, nz, &q[3]);
+      }
+      cache[li] += (double) (q[3]*q[3]);
+    }
+  }
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 3D permeability analysis
+__global__ void kernel_applyPreConditioner_fluid_3D_StencilByStencil_Pore(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    res[3*i]     = scl1*    v1[3*i]* 0.28125 + (v2 == NULL ? 0.0 : scl2*    v2[3*i]);
+    res[3*i+1]   = scl1*  v1[3*i+1]* 0.28125 + (v2 == NULL ? 0.0 : scl2*  v2[3*i+1]);
+    res[3*i+2]   = scl1*  v1[3*i+2]* 0.28125 + (v2 == NULL ? 0.0 : scl2*  v2[3*i+2]);
+    res[i+dim*3] = scl1*v1[i+dim*3]*-2.25    + (v2 == NULL ? 0.0 : scl2*v2[i+dim*3]);
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 3D permeability analysis
+__global__ void kernel_applyPreConditioner_fluid_3D_StencilByStencil_Border(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgFlag_t fluidkey = FluidMap[i];
+    cudapcgVar_t q = -18.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) + ((fluidkey>>4)&1) + ((fluidkey>>5)&1) + ((fluidkey>>6)&1) + ((fluidkey>>7)&1) );
+    res[i+nVelocityNodes*4] = scl1*v1[i+nVelocityNodes*4]*q + (v2 == NULL ? 0.0 : scl2*v2[i+nVelocityNodes*4]);
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 3D permeability analysis
+__global__ void kernel_applyinvPreConditioner_fluid_3D_StencilByStencil_Pore(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    res[3*i]     = scl1*    v1[3*i]*(1.0/0.28125) + (v2 == NULL ? 0.0 : scl2*    v2[3*i]);
+    res[3*i+1]   = scl1*  v1[3*i+1]*(1.0/0.28125) + (v2 == NULL ? 0.0 : scl2*  v2[3*i+1]);
+    res[3*i+2]   = scl1*  v1[3*i+2]*(1.0/0.28125) + (v2 == NULL ? 0.0 : scl2*  v2[3*i+2]);
+    res[i+dim*3] = scl1*v1[i+dim*3]*(1.0/-2.25)   + (v2 == NULL ? 0.0 : scl2*v2[i+dim*3]);
+  }
+}
+//------------------------------------------------------------------------------
+// Kernel to perform assembly-free preconditioner multiplication for 3D permeability analysis
+__global__ void kernel_applyinvPreConditioner_fluid_3D_StencilByStencil_Border(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, cudapcgVar_t scl1, cudapcgVar_t scl2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, cudapcgVar_t * res){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgFlag_t fluidkey = FluidMap[i];
+    cudapcgVar_t q =  (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) + ((fluidkey>>4)&1) + ((fluidkey>>5)&1) + ((fluidkey>>6)&1) + ((fluidkey>>7)&1) ) / -18.0;
+    res[i+nVelocityNodes*4] = scl1*v1[i+nVelocityNodes*4]*q + (v2 == NULL ? 0.0 : scl2*v2[i+nVelocityNodes*4]);
+  }
+}
+//------------------------------------------------------------------------------ 
+__global__ void kernel_Aprod_fluid_3D_StencilByStencil_Pore(
+    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgVar_t res[4];
+    Aprod_fluid_3D_StencilByStencil_Pore( NodeMap[i], v, dim, DOFMap, ny, nx, nz, &res[0]);
+
+    q[3*i]     = scl*res[0] +     q[3*i]*scl_prev;
+    q[3*i+1]   = scl*res[1] +   q[3*i+1]*scl_prev;
+    q[3*i+2]   = scl*res[2] +   q[3*i+2]*scl_prev;
+    q[i+dim*3] = scl*res[3] + q[i+dim*3]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------ 
+__global__ void kernel_PreConditionerAprod_fluid_3D_StencilByStencil_Pore(
+    cudapcgVar_t * v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, cudapcgVar_t * q, cudapcgVar_t scl, cudapcgVar_t scl_prev){
+  // Get global thread index
+  unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  // Check if this thread must work
+  if (i<dim){
+    cudapcgVar_t res[4];
+    Aprod_fluid_3D_StencilByStencil_Pore( NodeMap[i], v, dim, DOFMap, ny, nx, nz, &res[0]);
+
+    res[0]*= 0.28125;
+    res[1]*= 0.28125;
+    res[2]*= 0.28125;
+    res[3]*=-2.25;
+    q[3*i]     = scl*res[0] +     q[3*i]*scl_prev;
+    q[3*i+1]   = scl*res[1] +   q[3*i+1]*scl_prev;
+    q[3*i+2]   = scl*res[2] +   q[3*i+2]*scl_prev;
+    q[i+dim*3] = scl*res[3] + q[i+dim*3]*scl_prev;
+  }
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_3D_StencilByStencil_Pore(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t vi, lcl;
+    vi = v1[3*gi];
+    vi*=(v2 == NULL ? vi : v2[3*gi]);
+    lcl  = (double) (vi* 0.28125);
+    vi = v1[3*gi+1];
+    vi*=(v2 == NULL ? vi : v2[3*gi+1]);
+    lcl += (double) (vi* 0.28125);
+    vi = v1[3*gi+2];
+    vi*=(v2 == NULL ? vi : v2[3*gi+2]);
+    lcl += (double) (vi* 0.28125);
+    vi = v1[gi+dim*3];
+    vi*=(v2 == NULL ? vi : v2[gi+dim*3]);
+    lcl += (double) (vi*-2.25); 
+    cache[li] = lcl;
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,M^-1*v)
+__global__ void kernel_dotPreConditioner_fluid_3D_StencilByStencil_Border(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    cudapcgVar_t q = -18.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) + ((fluidkey>>4)&1) + ((fluidkey>>5)&1) + ((fluidkey>>6)&1) + ((fluidkey>>7)&1) );
+    cudapcgVar_t vi = v1[gi+nVelocityNodes*4];
+    vi*=(v2 == NULL ? vi : v2[gi+nVelocityNodes*4]);
+    cache[li] = (double) (vi*q); 
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,M*v)
+__global__ void kernel_dotinvPreConditioner_fluid_3D_StencilByStencil_Pore(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t vi, lcl;
+    vi = v1[3*gi];
+    vi*=(v2 == NULL ? vi : v2[3*gi]);
+    lcl  = (double) (vi*(64.0/18.0));
+    vi = v1[3*gi+1];
+    vi*=(v2 == NULL ? vi : v2[3*gi+1]);
+    lcl += (double) (vi*(64.0/18.0));
+    vi = v1[3*gi+2];
+    vi*=(v2 == NULL ? vi : v2[3*gi+2]);
+    lcl += (double) (vi*(64.0/18.0));
+    vi = v1[gi+dim*3];
+    vi*=(v2 == NULL ? vi : v2[gi+dim*3]);
+    lcl += (double) (vi*(4.0/9.0)); 
+    cache[li] = lcl;
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,M*v)
+__global__ void kernel_dotinvPreConditioner_fluid_3D_StencilByStencil_Border(
+    cudapcgVar_t *v1, cudapcgVar_t *v2, unsigned int dim, cudapcgFlag_t *FluidMap, unsigned int nVelocityNodes, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgFlag_t fluidkey = FluidMap[gi];
+    cudapcgVar_t q = -18.0 / (cudapcgVar_t) ( (fluidkey&1) + ((fluidkey>>1)&1) + ((fluidkey>>2)&1) + ((fluidkey>>3)&1) + ((fluidkey>>4)&1) + ((fluidkey>>5)&1) + ((fluidkey>>6)&1) + ((fluidkey>>7)&1) );
+    cudapcgVar_t vi = v1[gi+nVelocityNodes*4];
+    vi*=(v2 == NULL ? vi : v2[gi+nVelocityNodes*4]);
+    cache[li] = (double) (vi/q); 
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(v,A*v)
+__global__ void kernel_dotAprod_fluid_3D_StencilByStencil_Pore(
+  cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[4];
+    Aprod_fluid_3D_StencilByStencil_Pore( NodeMap[gi], v, dim, DOFMap, ny, nx, nz, &q[0]);
+    cache[li] = (double) (v[3*gi]*q[0] + v[3*gi+1]*q[1] + v[3*gi+2]*q[2] + v[gi+dim*3]*q[3]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,A*v)
+__global__ void kernel_dotA2prod_fluid_3D_StencilByStencil_Pore(
+  cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[4];
+    Aprod_fluid_3D_StencilByStencil_Pore( NodeMap[gi], v, dim, DOFMap, ny, nx, nz, &q[0]);
+    cache[li] = (double) (q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+//------------------------------------------------------------------------------
+// dot(A*v,M^-1*A*v)
+__global__ void kernel_dotPreConditionerA2prod_fluid_3D_StencilByStencil_Pore(
+  cudapcgVar_t *v, unsigned int dim, cudapcgIdMap_t *NodeMap, cudapcgIdMap_t *DOFMap, unsigned int nx, unsigned int ny, unsigned int nz, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  if (gi < dim){
+    cudapcgVar_t q[4];
+    Aprod_fluid_3D_StencilByStencil_Pore( NodeMap[gi], v, dim, DOFMap, ny, nx, nz, &q[0]);
+    cache[li] = (double) (q[0]*q[0]*0.28125 + q[1]*q[1]*0.28125 + q[2]*q[2]*0.28125 + q[3]*q[3]*-2.25);
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
 }
 //------------------------------------------------------------------------------

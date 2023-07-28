@@ -46,8 +46,9 @@ char report_buffer[1024]; // 1 KB (should always be enough)
 double time_total;
 
 // These are auxiliary. Might organize in a struct later.
-unsigned int assemblyfree_strategy_flag=CUDAPCG_NBN, solver_flag=CUDAPCG_DEFAULT_SOLVER, default_poremap_flag=CUDAPCG_POREMAP_NUM;
+unsigned int assemblyfree_strategy_flag=CUDAPCG_NBN, solver_flag=CUDAPCG_CG_SOLVER, preconditioner_flag=CUDAPCG_TRUE, default_poremap_flag=CUDAPCG_POREMAP_NUM, xreduce_flag = CUDAPCG_XREDUCE_FULL;
 logical stopCrit_flag=CUDAPCG_L2_NORM;
+double xreduce_scale_factor=0.0001;
 
 //---------------------------------
 ///////////////////////////////////
@@ -96,9 +97,10 @@ cudapcgFlag_t cudapcgModel_constructor(cudapcgModel_t **ptr, const void *data){
 
   (*ptr)->nelem = model->m_nelem;
   (*ptr)->nvars = model->m_ndof;
+  (*ptr)->nvarspernode = HMG_FLUID ? model->m_dim_flag : (model->m_ndof / model->m_nelem);
 
   (*ptr)->nkeys = model->m_analysis_flag == HMG_FLUID ? 1 : model->m_nmat;
-  (*ptr)->nlocalvars = model->m_lclMtx_dim;
+  (*ptr)->localmtxdim = model->m_lclMtx_dim;
   (*ptr)->nporenodes = model->m_nVelocityNodes;
   (*ptr)->nbordernodes = model->m_nBorderNodes;
 
@@ -145,6 +147,7 @@ logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename)
   hmgModel->m_hmg_flag = HOMOGENIZE_ALL;
   hmgModel->m_using_x0_flag = HMG_FALSE;
   hmgModel->m_exportX_flag = HMG_FALSE;
+  hmgModel->m_hmg_thermal_expansion_flag = HMG_FALSE;
   
   hmgModel->m_saveFields_flag = HMG_FALSE;
   hmgModel->m_fieldsByElem_flag = 0;
@@ -166,6 +169,7 @@ logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename)
   hmgModel->CB = NULL;
   hmgModel->RHS = NULL;
   hmgModel->C = NULL;
+  hmgModel->thermal_expansion = NULL;
   hmgModel->pore_border_fluidkeys = NULL;
   hmgModel->pore_dof2node_map = NULL;
   hmgModel->report = NULL;
@@ -358,6 +362,10 @@ logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename)
       free(hmgModel);
       return HMG_FALSE;
   }
+  
+  if (hmgModel->m_hmg_thermal_expansion_flag == HMG_TRUE){
+    hmgModel->thermal_expansion = (var *)malloc(sizeof(var)*6); // largest case (3D)
+  }
 
   // Initialize pointer to array of strings to store analysis report
   hmgModel->report = reportCreate(NULL);
@@ -400,6 +408,9 @@ logical hmgEnd(){
   free(hmgModel->Mtxs);               hmgModel->Mtxs = NULL;
   free(hmgModel->CB);                 hmgModel->CB = NULL;
   free(hmgModel->C);                  hmgModel->C = NULL;
+  
+  if (hmgModel->thermal_expansion)
+  free(hmgModel->thermal_expansion);  hmgModel->thermal_expansion = NULL;
 
   if (hmgModel->pore_border_fluidkeys)
   	free(hmgModel->pore_border_fluidkeys); hmgModel->pore_border_fluidkeys = NULL;
@@ -423,6 +434,11 @@ logical hmgEnd(){
   return HMG_TRUE;
 }
 //------------------------------------------------------------------------------
+void hmgSetXReduceFlag(cudapcgFlag_t flag){
+  xreduce_flag = flag <= CUDAPCG_XREDUCE_FULL ? flag : CUDAPCG_XREDUCE_FULL;
+  return;
+}
+//------------------------------------------------------------------------------
 void hmgSetParallelStrategyFlag(cudapcgFlag_t flag){
   assemblyfree_strategy_flag = hmgModel->sdfFile==NULL ? flag : CUDAPCG_EBE; // safety measure for now
   return;
@@ -430,6 +446,11 @@ void hmgSetParallelStrategyFlag(cudapcgFlag_t flag){
 //------------------------------------------------------------------------------
 void hmgSetSolverFlag(cudapcgFlag_t flag){
   solver_flag = flag;
+  return;
+}
+//------------------------------------------------------------------------------
+void hmgSetPreConditionerFlag(cudapcgFlag_t flag){
+  preconditioner_flag = (flag > 0) ? CUDAPCG_TRUE : CUDAPCG_FALSE;
   return;
 }
 //------------------------------------------------------------------------------
@@ -538,6 +559,13 @@ void hmgFindInitialGuesses(unsigned int nlevels){
     printf("WARNING: Initial guess estimation is not yet available for analyses with a scalar field input (.bin).\n");
     printf("         Null initial guess will be considered (x0 = [0]).\n");
     return;
+  }
+
+  // Check if solver is for permeability only
+  if (solver_flag > CUDAPCG_MINRES3_SOLVER){
+    printf("WARNING: CG2 and MINRES2 are only available for FLUID.\n");
+    printf("         Defaulting to %s.\n", solver_flag == CUDAPCG_CG2_SOLVER ? "CG3" :  "MINRES3" );
+    solver_flag = solver_flag == CUDAPCG_CG2_SOLVER ? CUDAPCG_CG3_SOLVER :  CUDAPCG_MINRES3_SOLVER;
   }
 
   // Append text report
@@ -664,7 +692,8 @@ void hmgFindInitialGuesses(unsigned int nlevels){
       // Set indentation header to print metrics
       cudapcgSetHeaderString(str_indentation);
       // Set solver flag (ternary operator to switch between MParPCG or MINRES)
-      cudapcgSetSolver(solver_flag < CUDAPCG_MINRES_SOLVER ? CUDAPCG_DEFAULT_SOLVER : CUDAPCG_MINRES_SOLVER);
+      cudapcgSetSolver( (solver_flag == CUDAPCG_MINRES_SOLVER || solver_flag == CUDAPCG_MINRES3_SOLVER) ? CUDAPCG_MINRES_SOLVER : CUDAPCG_CG_SOLVER);
+      cudapcgSetPreconditioner(preconditioner_flag);
       // Set residual norm flag
       cudapcgSetResNorm(0); // L2
       // Assemble dof maps
@@ -749,7 +778,7 @@ void hmgFindInitialGuesses(unsigned int nlevels){
           }
           cudapcgVar_t *ptr_x0 = model_arr[i-1]->x0[model_arr[i]->m_hmg_flag];
           unsigned int dim = model_arr[i]->m_ndof;
-          #pragma omp parallel for private(dim)
+          #pragma omp parallel for
           for (unsigned int n=0; n<dim; n++){
             ptr_x0[n] = x[n];
           }
@@ -803,6 +832,13 @@ void hmgFindInitialGuesses(unsigned int nlevels){
 //------------------------------------------------------------------------------
 void hmgSolveHomogenization(){
   if (hmgModel == NULL) return;
+
+  // Check if analysis is not of permeability and solver is for permeability only
+  if (hmgModel->m_analysis_flag != HMG_FLUID && solver_flag > CUDAPCG_MINRES3_SOLVER){
+    printf("WARNING: CG2 and MINRES2 are only available for FLUID.\n");
+    printf("         Defaulting to %s.\n", solver_flag == CUDAPCG_CG2_SOLVER ? "CG3" :  "MINRES3" );
+    solver_flag = solver_flag == CUDAPCG_CG2_SOLVER ? CUDAPCG_CG3_SOLVER :  CUDAPCG_MINRES3_SOLVER;
+  }
 
   // Buffer variables to measure wall time
   double t, t_init_guess, t_hmg;
@@ -865,6 +901,15 @@ void hmgSolveHomogenization(){
     return;
   }
 
+  // Set xreduce flag
+  cudapcgSetXReduceMode(xreduce_flag);
+  
+  // Set xreduce scale
+  cudapcgSetXReduceScale( (hmgModel->m_elem_size*hmgModel->m_elem_size) / (double) (hmgModel->m_nelem) );
+
+  // Set xreduce stabilization factor (default=0.0001)
+  cudapcgSetReduceStabFactor(xreduce_scale_factor);
+
   // Set indentation header to print metrics
   cudapcgSetHeaderString(str_indentation);
 
@@ -874,6 +919,10 @@ void hmgSolveHomogenization(){
 
   // Set solver flag
   if(!cudapcgSetSolver(solver_flag)){
+    cudapcgEnd();
+    return;
+  }
+  if(!cudapcgSetPreconditioner(preconditioner_flag)){
     cudapcgEnd();
     return;
   }
@@ -926,7 +975,7 @@ void hmgSolveHomogenization(){
   }
 
   // Allocate x array
-  cudapcgVar_t *x = (cudapcgVar_t *) malloc(sizeof(cudapcgVar_t)*hmgModel->m_ndof);
+  cudapcgVar_t *x = (cudapcgVar_t *) malloc(sizeof(cudapcgVar_t)*(solver_flag < CUDAPCG_CG2_SOLVER ? hmgModel->m_ndof : hmgModel->m_C_dim));
   if (x==NULL){
     printf(" ERROR: Memory allocation for solution array has failed.\n");
     cudapcgEnd();
@@ -993,14 +1042,15 @@ void hmgSolveHomogenization(){
         printf("Failed!...");
         cudapcgSetX0(NULL,CUDAPCG_FALSE);
       } else {
-        fread(x0_fromfile,sizeof(cudapcgVar_t)*hmgModel->m_ndof,1,file);
-            cudapcgSetX0(x0_fromfile,CUDAPCG_FALSE);
+        if (fread(x0_fromfile,sizeof(cudapcgVar_t),hmgModel->m_ndof,file) < hmgModel->m_ndof) printf("WARNING: Failed to read all %d items from %s...",hmgModel->m_ndof,file_buffer);
+        cudapcgSetX0(x0_fromfile,CUDAPCG_FALSE);
       }
       fclose(file);
       }
-        t_init_guess = omp_get_wtime()-t_init_guess;
-        printf("Done.(%.2e s)\n",t_init_guess);
+      t_init_guess = omp_get_wtime()-t_init_guess;
+      printf("Done.(%.2e s)\n",t_init_guess);
     }
+    if (solver_flag > CUDAPCG_MINRES3_SOLVER) cudapcgSetXReduceShift(hmgModel->m_hmg_flag <= HMG_DIR_Z ? hmgModel->m_hmg_flag : HMG_DIR_X);
     cudapcgSolve(x); t = omp_get_wtime()-t;
     cudapcgPrintSolverMetrics();
     if (hmgModel->m_report_flag){
@@ -1017,22 +1067,30 @@ void hmgSolveHomogenization(){
       }
       fclose(file);
     }
-
     
     // Update C
-    t = omp_get_wtime();
-    printf("    Updating homogenized properties...");
-    hmgModel->updateC(hmgModel,x);
-    t = omp_get_wtime()-t;
-    printf("Done.(%.2e s)\n",t);
-    if (hmgModel->m_report_flag){
-      sprintf(
-        report_buffer,
-        "    Updating homogenized properties...\n"\
-        "%sElapsed time: %.2e s\n",
-        str_indentation, t
-      );
-      reportAppend(hmgModel->report, report_buffer);
+    if (solver_flag >= CUDAPCG_CG2_SOLVER){
+      printf("    Effective fields:\n");
+      for (int jj=0; jj<hmgModel->m_dim_flag; jj++){
+        //x[jj] *= (hmgModel->m_elem_size * hmgModel->m_elem_size) / (double) hmgModel->m_nelem;
+        printf("        %.8e\n",x[jj]);
+        hmgModel->C[jj*hmgModel->m_dim_flag+hmgModel->m_hmg_flag] = x[jj];
+      }
+    } else {
+      t = omp_get_wtime();
+      printf("    Updating homogenized properties...");
+      hmgModel->updateC(hmgModel,x);
+      t = omp_get_wtime()-t;
+      printf("Done.(%.2e s)\n",t);
+      if (hmgModel->m_report_flag){
+        sprintf(
+          report_buffer,
+          "    Updating homogenized properties...\n"\
+          "%sElapsed time: %.2e s\n",
+          str_indentation, t
+        );
+        reportAppend(hmgModel->report, report_buffer);
+      }
     }
 
     // Output fields from simulation (if required)
@@ -1045,6 +1103,58 @@ void hmgSolveHomogenization(){
     }
   }
 
+  if (hmgModel->m_hmg_thermal_expansion_flag == HMG_TRUE){
+    if(hmgModel->m_analysis_flag == HMG_ELASTIC){
+      hmgModel->m_hmg_flag = HOMOGENIZE_THERMAL_EXPANSION;
+      
+      sprintf(
+        report_buffer,
+        "    ------------------------------------------------------\n"\
+        "    Thermal expansion analysis:\n"
+      );
+      if (hmgModel->m_report_flag)
+        reportAppend(hmgModel->report, report_buffer);
+      printf("%s",report_buffer);
+      
+      t = omp_get_wtime();
+      printf("    Assembling RHS...");
+      hmgModel->assembleRHS(hmgModel);
+      cudapcgSetRHS(hmgModel->RHS);
+      t = omp_get_wtime()-t;
+      printf("Done.(%.2e s)\n",t);
+      
+      t = omp_get_wtime();
+      strcpy(report_buffer,"    Solving system of equations...\n");
+      if (hmgModel->m_report_flag)
+        reportAppend(hmgModel->report, report_buffer);
+      printf("%s",report_buffer);
+      cudapcgSolve(x); t = omp_get_wtime()-t;
+      cudapcgPrintSolverMetrics();
+      if (hmgModel->m_report_flag){
+        cudapcgPrintSolverReport2(report_buffer);
+        reportAppend(hmgModel->report, report_buffer);
+      }
+      printf("    Done.(%.2e s)\n",t);
+      
+      t = omp_get_wtime();
+      printf("    Updating homogenized properties...");
+      hmgModel->updateC(hmgModel,x);
+      t = omp_get_wtime()-t;
+      printf("Done.(%.2e s)\n",t);
+      if (hmgModel->m_report_flag){
+        sprintf(
+          report_buffer,
+          "    Updating homogenized properties...\n"\
+          "%sElapsed time: %.2e s\n",
+          str_indentation, t
+        );
+        reportAppend(hmgModel->report, report_buffer);
+      }
+    } else {
+      printf("    WARNING: Thermal expansion analysis only available for ELASTIC.\n");
+    }
+  }
+  
   strcpy(report_buffer,"    ------------------------------------------------------\n");
   if (hmgModel->m_report_flag)
     reportAppend(hmgModel->report, report_buffer);
@@ -1094,6 +1204,9 @@ void hmgPrintModelData(){
   }
 
   const char str_hmg[7][11] = { {"X"},{"Y"},{"Z"},{"YZ (shear)"},{"XZ (shear)"},{"XY (shear)"},{"ALL"} };
+  const char str_solver[6][8] = { {"CG"},{"MINRES"},{"CG3"},{"MINRES3"},{"CG2"},{"MINRES2"} };
+  char xreduce_str_buffer[32];
+  sprintf(xreduce_str_buffer,"xreduce stab factor: %.2e\n",xreduce_scale_factor);
 
   sprintf(
     report_buffer,
@@ -1108,11 +1221,13 @@ void hmgPrintModelData(){
     "Number of materials: %d\n"\
     "Numerical tolerance: %e\n"\
     "Max iterations: %d\n"\
-    "Solver: %s\n"\
+    "Solver: %s%s\n"\
+    "%s"\
     "*******************************************************\n",
     str_sim,str_hmg[hmgModel->m_hmg_flag],hmgModel->m_nx-1,hmgModel->m_ny-1,hmgModel->m_nz-(hmgModel->m_nz>0),
     hmgModel->m_nelem,hmgModel->m_nnode,hmgModel->m_ndof,hmgModel->m_nmat,hmgModel->m_num_tol,hmgModel->m_max_iterations,
-    solver_flag == CUDAPCG_DEFAULT_SOLVER ? "PCG" : (solver_flag == CUDAPCG_NOJACOBI_SOLVER ? "CG" : "MINRES")
+    preconditioner_flag ? "P" : "", str_solver[solver_flag],
+    solver_flag < CUDAPCG_CG2_SOLVER ? "" : xreduce_str_buffer 
   );
 
   if (hmgModel->m_report_flag)
@@ -1253,11 +1368,12 @@ logical readData(char * filename){
   file = fopen( filename , "r");
   if (!file) return HMG_FALSE;
   var tol_buffer;
-  unsigned int count=0, num_of_info=10;
+  unsigned int count=0, num_of_info=11;
+  logical was_xreduce_stabfactor_set = HMG_FALSE;
   printf("\r    Scanning through neutral file...[%3d%%]",(count*100)/num_of_info);
   while (fscanf(file, "%s", str)!=EOF && count<num_of_info){
     if (!strcmp(str,"%type_of_analysis")){
-      fscanf(file, "%hu", &(hmgModel->m_analysis_flag));
+      if (fscanf(file, "%hu", &(hmgModel->m_analysis_flag))==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
       printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
       if (hmgModel->m_analysis_flag != HMG_THERMAL &&
           hmgModel->m_analysis_flag != HMG_ELASTIC &&
@@ -1272,17 +1388,17 @@ logical readData(char * filename){
     //} else if (!strcmp(str,"%type_of_rhs")){
 
     } else if (!strcmp(str,"%voxel_size")){
-      fscanf(file, "%lf", &(hmgModel->m_elem_size));
+      if(fscanf(file, "%lf", &(hmgModel->m_elem_size))==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
       printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
     } else if (!strcmp(str,"%solver_tolerance")){
-      fscanf(file, "%lf", &tol_buffer);
+      if(fscanf(file, "%lf", &tol_buffer)==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
       hmgModel->m_num_tol = (cudapcgTol_t) tol_buffer;
       printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
     } else if (!strcmp(str,"%number_of_iterations")){
-      fscanf(file, "%i", &(hmgModel->m_max_iterations));
+      if(fscanf(file, "%i", &(hmgModel->m_max_iterations))==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
       printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
     } else if (!strcmp(str,"%image_dimensions")){
-      fscanf(file, "%i %i %i", &(hmgModel->m_nx), &(hmgModel->m_ny), &(hmgModel->m_nz));
+      if(fscanf(file, "%i %i %i", &(hmgModel->m_nx), &(hmgModel->m_ny), &(hmgModel->m_nz))==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
       printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
       hmgModel->m_nx++;hmgModel->m_ny++;
       if (hmgModel->m_nz){
@@ -1292,11 +1408,11 @@ logical readData(char * filename){
         hmgModel->m_dim_flag = HMG_2D;
       }
     } else if (!strcmp(str,"%refinement")){
-      fscanf(file, "%i", &(hmgModel->m_mesh_refinement));
+      if(fscanf(file, "%i", &(hmgModel->m_mesh_refinement))==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
       printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
       if (hmgModel->m_mesh_refinement < 1) return HMG_FALSE;
     } else if (!strcmp(str,"%number_of_materials")){
-      fscanf(file, "%hhu", &(hmgModel->m_nmat));
+      if(fscanf(file, "%hhu", &(hmgModel->m_nmat))==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
       printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
       if (hmgModel->m_nmat > MAX_COLORNUM){
         fclose(file);
@@ -1306,11 +1422,11 @@ logical readData(char * filename){
     } else if (!strcmp(str,"%properties_of_materials")){
       for (unsigned char i=0; i<hmgModel->m_nmat; i++){
         if (hmgModel->m_analysis_flag == HMG_ELASTIC){
-          fscanf(file, "%hhu %lf %lf", &mat_id, &(hmgModel->props[2*i]), &(hmgModel->props[2*i+1]));
+          if(fscanf(file, "%hhu %lf %lf", &mat_id, &(hmgModel->props[2*i]), &(hmgModel->props[2*i+1]))==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
         } else if (hmgModel->m_analysis_flag == HMG_THERMAL){
-          fscanf(file, "%hhu %lf", &mat_id, &(hmgModel->props[i]));
+          if(fscanf(file, "%hhu %lf", &mat_id, &(hmgModel->props[i]))==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
         } else
-          fscanf(file, "%hhu", &mat_id);
+          if(fscanf(file, "%hhu", &mat_id)==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
         printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
 
         if (mat_id > MAX_COLORKEY){
@@ -1320,11 +1436,19 @@ logical readData(char * filename){
         }
         hmgModel->props_keys[mat_id] = i;
       }
+      
+    } else if (!strcmp(str,"%thermal_expansion")){
+      if (hmgModel->m_analysis_flag == HMG_ELASTIC){
+        for (unsigned char i=0; i<hmgModel->m_nmat; i++){
+          if(fscanf(file, "%lf", &(hmgModel->alpha[i]))==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
+        }
+        hmgModel->m_hmg_thermal_expansion_flag = HMG_TRUE;
+      }
 
     //} else if (!strcmp(str,"%volume_fraction")){
 
     } else if (!strcmp(str,"%data_type")){
-      fscanf(file, "%s", str);
+      if(fscanf(file, "%s", str)==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
       if (!strcmp(str,"float32") || !strcmp(str,"float") || !strcmp(str,"single")){
         hmgModel->m_scalar_field_data_type_flag = HMG_FLOAT32;
       } else if (!strcmp(str,"float64") || !strcmp(str,"double")){
@@ -1333,6 +1457,10 @@ logical readData(char * filename){
         printf("WARNING: %%data_type was set as \"%s\", which is invalid for the scalar density field input. Will attempt to read it as float32.",str);
         hmgModel->m_scalar_field_data_type_flag = HMG_FLOAT32;
       }
+      printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
+    } else if(!strcmp(str,"%xreduce_scale_factor")){
+      if(fscanf(file, "%lf", &xreduce_scale_factor)==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
+      was_xreduce_stabfactor_set = HMG_TRUE;
       printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
     }
   }
@@ -1356,6 +1484,8 @@ logical readData(char * filename){
   //} else if (hmgModel->m_mesh_refinement != 1){
   //  return HMG_FALSE;
   }
+  // check xreduce stab factor
+  if (!was_xreduce_stabfactor_set) xreduce_scale_factor = hmgModel->m_num_tol >= 0.0000005 ? (hmgModel->m_num_tol*hmgModel->m_num_tol) : 0.000000000001; // defaults to 1e-12 
   return HMG_TRUE;
 }
 //------------------------------------------------------------------------------

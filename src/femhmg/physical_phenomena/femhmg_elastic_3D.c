@@ -2,6 +2,16 @@
 #include "femhmg_elastic_3D.h"
 
 //------------------------------------------------------------------------------
+void strainFromDispl_elastic_3D(var *s, var *d, var x, var y, var z);
+//------------------------------------------------------------------------------
+void stressFromDispl_elastic_3D(var *s, var *d, var E, var v, var x, var y, var z);
+//------------------------------------------------------------------------------
+void stressFromAlpha_elastic_3D(var *s, var *a, var E, var v, var x, var y, var z);
+//------------------------------------------------------------------------------
+void forceFromStrain_elastic_3D(var *f, var *a, var E, var v, var x, var y, var z);
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
 logical initModel_elastic_3D(hmgModel_t *model){
 	if ((model->m_nx-1) <= 0 || (model->m_ny-1) <= 0 || (model->m_nz-1) <= 0 || model->m_nmat <= 0){
 	  printf("ERROR: Failed to initialize model due to bad input parameters.\nrows:%d\ncols:%d\nslices:%d\nmaterials:%d\n",(model->m_ny-1),(model->m_nx-1),(model->m_nz-1),model->m_nmat);
@@ -450,6 +460,50 @@ void assembleRHS_elastic_3D(hmgModel_t *model){
 			model->RHS[model->node_dof_map[n]+1] -= (thisK[30]+thisK[33]+thisK[42]+thisK[45])*dim_y;
 			model->RHS[model->node_dof_map[n]+2] -= (thisK[54]+thisK[57]+thisK[66]+thisK[69])*dim_y;
 		}
+	}  else if (model->m_hmg_flag == HOMOGENIZE_THERMAL_EXPANSION){
+	  var alpha[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
+	  var local_f[24] = {0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0};
+	  for (uint32_t e=0; e < model->m_nelem; e++){
+	    alpha[0] = model->alpha[model->elem_material_map[e]];
+	    alpha[1] = alpha[0];
+		alpha[2] = alpha[0];
+	    alpha[3] = 0.0;
+		alpha[4] = 0.0;
+		alpha[5] = 0.0;
+	    forceFromStrain_elastic_3D(&local_f[0],&alpha[0],model->props[2*model->elem_material_map[e]],model->props[2*model->elem_material_map[e]+1],0.5,0.5,0.5);
+	    n = 1+(e%dim_xy)+((e%dim_xy)/dim_y)+(e/dim_xy)*model->m_nx*model->m_ny;
+		model->RHS[model->node_dof_map[n]]   += local_f[0];
+		model->RHS[model->node_dof_map[n]+1] += local_f[1];
+		model->RHS[model->node_dof_map[n]+2] += local_f[2];
+		n += model->m_ny;
+		model->RHS[model->node_dof_map[n]]   += local_f[3];
+		model->RHS[model->node_dof_map[n]+1] += local_f[4];
+		model->RHS[model->node_dof_map[n]+2] += local_f[5];
+		n -= 1;
+		model->RHS[model->node_dof_map[n]]   += local_f[6];
+		model->RHS[model->node_dof_map[n]+1] += local_f[7];
+		model->RHS[model->node_dof_map[n]+2] += local_f[8];
+		n -= model->m_ny;
+		model->RHS[model->node_dof_map[n]]   += local_f[9];
+		model->RHS[model->node_dof_map[n]+1] += local_f[10];
+		model->RHS[model->node_dof_map[n]+2] += local_f[11];
+		n += 1+model->m_nx*model->m_ny;
+		model->RHS[model->node_dof_map[n]]   += local_f[12];
+		model->RHS[model->node_dof_map[n]+1] += local_f[13];
+		model->RHS[model->node_dof_map[n]+2] += local_f[14];
+		n += model->m_ny;
+		model->RHS[model->node_dof_map[n]]   += local_f[15];
+		model->RHS[model->node_dof_map[n]+1] += local_f[16];
+		model->RHS[model->node_dof_map[n]+2] += local_f[17];
+		n -= 1;
+		model->RHS[model->node_dof_map[n]]   += local_f[18];
+		model->RHS[model->node_dof_map[n]+1] += local_f[19];
+		model->RHS[model->node_dof_map[n]+2] += local_f[20];
+		n -= model->m_ny;
+		model->RHS[model->node_dof_map[n]]   += local_f[21];
+		model->RHS[model->node_dof_map[n]+1] += local_f[22];
+		model->RHS[model->node_dof_map[n]+2] += local_f[23];
+	  }
 	}
 	return;
 }
@@ -805,7 +859,240 @@ void assembleRHS_elastic_3D_ScalarDensityField(hmgModel_t *model){
 	return;
 }
 //------------------------------------------------------------------------------
+void updateC_elastic_3D_thermal_expansion(hmgModel_t *model, cudapcgVar_t * D){
+    unsigned int e, n, ii;
+	unsigned int dim_x = model->m_nx-1;
+	unsigned int dim_y = model->m_ny-1;
+	unsigned int dim_z = model->m_nz-1;
+	unsigned int dim_xy = dim_x*dim_y;
+	unsigned int dim_xz = dim_x*dim_z;
+	unsigned int dim_yz = dim_y*dim_z;
+	var d;
+	cudapcgVar_t * thisCB=NULL;
+
+	var stress[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
+	var strain[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
+	var local_d[24] = {0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0};
+	var local_stress[6]={0.0,0.0,0.0,0.0,0.0,0.0};
+	var local_strain[6]={0.0,0.0,0.0,0.0,0.0,0.0};
+	var local_alpha[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
+
+  var C_i=0.0, C_j=0.0, C_k=0.0, C_x=0.0, C_y=0.0, C_z=0.0;
+  var *pC_i=&stress[0], *pC_j=&stress[1], *pC_k=&stress[2], *pC_x=&stress[3], *pC_y=&stress[4], *pC_z=&stress[5];
+  
+  // Compute effective stress (similar to updateC)
+	#pragma omp parallel for private(ii,C_i,C_j,C_k,C_x,C_y,C_z,d,thisCB,n)
+	for (e=0;e<model->m_nelem;e++){
+
+		thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
+
+		C_i = 0.0; C_j = 0.0; C_k = 0.0; C_x = 0.0; C_y = 0.0; C_z = 0.0;
+
+		// node 0 (left,bottom,near)
+		n = 1+(e%dim_xy)+((e%dim_xy)/dim_y)+(e/dim_xy)*model->m_nx*model->m_ny;
+		for (ii=0;ii<3;ii++){
+			d = D[model->node_dof_map[n]+ii];
+			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
+			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
+		}
+
+		// node 1 (right,bottom,near)
+		n+=model->m_ny;
+		for (ii=3;ii<6;ii++){
+			d = D[model->node_dof_map[n]+ii-3];
+			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
+			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
+		}
+
+		// node 2 (right,top,near)
+		n-=1;
+		for (ii=6;ii<9;ii++){
+			d = D[model->node_dof_map[n]+ii-6];
+			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
+			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
+		}
+
+		// node 3 (left,top,near)
+		n-=model->m_ny;
+		for (ii=9;ii<12;ii++){
+			d = D[model->node_dof_map[n]+ii-9];
+			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
+			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
+		}
+
+		// node 4 (left,bottom,far)
+		n+=1+model->m_nx*model->m_ny;
+		for (ii=12;ii<15;ii++){
+			d = D[model->node_dof_map[n]+ii-12];
+			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
+			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
+		}
+
+		// node 5 (right,bottom,far)
+		n+=model->m_ny;
+		for (ii=15;ii<18;ii++){
+			d = D[model->node_dof_map[n]+ii-15];
+			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
+			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
+		}
+
+		// node 6 (right,top,far)
+		n-=1;
+		for (ii=18;ii<21;ii++){
+			d = D[model->node_dof_map[n]+ii-18];
+			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
+			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
+		}
+
+		// node 7 (left,top,far)
+		n-=model->m_ny;
+		for (ii=21;ii<24;ii++){
+			d = D[model->node_dof_map[n]+ii-21];
+			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
+			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
+		}
+
+		#pragma omp atomic
+		*pC_i += C_i;
+
+		#pragma omp atomic
+		*pC_j += C_j;
+
+		#pragma omp atomic
+		*pC_k += C_k;
+
+		#pragma omp atomic
+		*pC_x += C_x;
+
+		#pragma omp atomic
+		*pC_y += C_y;
+
+		#pragma omp atomic
+		*pC_z += C_z;
+	}
+
+	// Compute effective strain and add thermal expansion contribution to effective stress
+	for (e=0;e<model->m_nelem;e++){
+		n = 1+(e%dim_xy)+((e%dim_xy)/dim_y)+(e/dim_xy)*model->m_nx*model->m_ny;
+		local_d[0] = D[model->node_dof_map[n]];
+		local_d[1] = D[model->node_dof_map[n]+1];
+		local_d[2] = D[model->node_dof_map[n]+2];
+		n+=model->m_ny;
+		local_d[3] = D[model->node_dof_map[n]];
+		local_d[4] = D[model->node_dof_map[n]+1];
+		local_d[5] = D[model->node_dof_map[n]+2];
+		n-=1;
+		local_d[6] = D[model->node_dof_map[n]];
+		local_d[7] = D[model->node_dof_map[n]+1];
+		local_d[8] = D[model->node_dof_map[n]+2];
+		n-=model->m_ny;
+		local_d[9] = D[model->node_dof_map[n]];
+		local_d[10] = D[model->node_dof_map[n]+1];
+		local_d[11] = D[model->node_dof_map[n]+2];
+		n+=1+model->m_nx*model->m_ny;
+		local_d[12] = D[model->node_dof_map[n]];
+		local_d[13] = D[model->node_dof_map[n]+1];
+		local_d[14] = D[model->node_dof_map[n]+2];
+		n+=model->m_ny;
+		local_d[15] = D[model->node_dof_map[n]];
+		local_d[16] = D[model->node_dof_map[n]+1];
+		local_d[17] = D[model->node_dof_map[n]+2];
+		n-=1;
+		local_d[18] = D[model->node_dof_map[n]];
+		local_d[19] = D[model->node_dof_map[n]+1];
+		local_d[20] = D[model->node_dof_map[n]+2];
+		n-=model->m_ny;
+		local_d[21] = D[model->node_dof_map[n]];
+		local_d[22] = D[model->node_dof_map[n]+1];
+		local_d[23] = D[model->node_dof_map[n]+2];
+
+		local_strain[0] = 0.0;
+		local_strain[1] = 0.0;
+		local_strain[2] = 0.0;
+		local_strain[3] = 0.0;
+		local_strain[4] = 0.0;
+		local_strain[5] = 0.0;
+
+		strainFromDispl_elastic_3D(&local_strain[0],&local_d[0],0.5,0.5,0.5);
+		strain[0] += local_strain[0];
+		strain[1] += local_strain[1];
+		strain[2] += local_strain[2];
+		strain[3] += local_strain[3];
+		strain[4] += local_strain[4];
+		strain[5] += local_strain[5];
+		
+		local_alpha[0] = model->alpha[model->elem_material_map[e]];
+		local_alpha[1] = local_alpha[0];
+		local_alpha[2] = local_alpha[0];
+		local_alpha[3] = 0.0;
+		local_alpha[4] = 0.0;
+		local_alpha[5] = 0.0;
+		
+		local_stress[0] = 0.0;
+		local_stress[1] = 0.0;
+		local_stress[2] = 0.0;
+		local_stress[3] = 0.0;
+		local_stress[4] = 0.0;
+		local_stress[5] = 0.0;
+		
+		stressFromAlpha_elastic_3D(&local_stress[0],&local_alpha[0],model->props[2*model->elem_material_map[e]],model->props[2*model->elem_material_map[e]+1],0.5,0.5,0.5);
+		stress[0] -= local_stress[0];
+		stress[1] -= local_stress[1];
+		stress[2] -= local_stress[2];
+		stress[3] -= local_stress[3];
+		stress[4] -= local_stress[4];
+		stress[5] -= local_stress[5];
+	}
+	for (unsigned int k=0; k<6; k++){
+		strain[k] /= (double) model->m_nelem;
+		stress[k] /= (double) model->m_nelem;
+	}
+
+	var beta[6];
+	beta[0] = -stress[0] +  model->C[0]*strain[0] +  model->C[1]*strain[1] +  model->C[2]*strain[2] +  model->C[3]*strain[3] +  model->C[4]*strain[4] +  model->C[5]*strain[5];
+	beta[1] = -stress[1] +  model->C[6]*strain[0] +  model->C[7]*strain[1] +  model->C[8]*strain[2] +  model->C[9]*strain[3] + model->C[10]*strain[4] + model->C[11]*strain[5];
+	beta[2] = -stress[2] + model->C[12]*strain[0] + model->C[13]*strain[1] + model->C[14]*strain[2] + model->C[15]*strain[3] + model->C[16]*strain[4] + model->C[17]*strain[5];
+	beta[3] = -stress[3] + model->C[18]*strain[0] + model->C[19]*strain[1] + model->C[20]*strain[2] + model->C[21]*strain[3] + model->C[22]*strain[4] + model->C[23]*strain[5];
+	beta[4] = -stress[4] + model->C[24]*strain[0] + model->C[25]*strain[1] + model->C[26]*strain[2] + model->C[27]*strain[3] + model->C[28]*strain[4] + model->C[29]*strain[5];
+	beta[5] = -stress[5] + model->C[30]*strain[0] + model->C[31]*strain[1] + model->C[32]*strain[2] + model->C[33]*strain[3] + model->C[34]*strain[4] + model->C[35]*strain[5];
+
+	// Solve 6x6 system with simple hardcoded gauss elim: alpha = C^-1 *beta
+	var alpha[6], scl;
+	var M[36];
+	for (unsigned int j=0; j<36; j++) M[j] = model->C[j];
+
+	for (unsigned int i=0; i<5; i++){
+		for (unsigned int j=i+1; j<6; j++){
+			scl = M[j*6+i]/M[7*i];
+			for (unsigned int k=i+1; k<6; k++) M[j*6+k] -= M[i*6+k]*scl;
+			beta[j] -= beta[i]*scl;
+			M[j*6+i] = 0.0;
+		}
+	}
+	alpha[5] = beta[5]/M[35];
+	for (int i=4; i>=0; i--){
+		alpha[i] = beta[i];
+		for (int j=5; j>i; j--) alpha[i] -= M[6*i+j]*alpha[j];
+		alpha[i] /= M[7*i];
+	}
+	
+	model->thermal_expansion[0] = alpha[0];
+	model->thermal_expansion[1] = alpha[1];
+	model->thermal_expansion[2] = alpha[2];
+	model->thermal_expansion[3] = alpha[3];
+	model->thermal_expansion[4] = alpha[4];
+	model->thermal_expansion[5] = alpha[5];
+
+  return;
+}
+//------------------------------------------------------------------------------
 void updateC_elastic_3D(hmgModel_t *model, cudapcgVar_t * D){
+
+	if (model->m_hmg_flag == HOMOGENIZE_THERMAL_EXPANSION){
+		updateC_elastic_3D_thermal_expansion(model,D);
+		return;
+	}
+
 	unsigned int e, ei, n;
 	unsigned int dim_x = model->m_nx-1;
 	unsigned int dim_y = model->m_ny-1;
@@ -1159,7 +1446,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 
 	if (model->m_hmg_flag == HOMOGENIZE_X){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
 		for (ei=0; ei<dim_yz; ei++){
 			e = (model->m_nx-2)*dim_y+ei%dim_y+(ei/dim_y)*dim_xy;
 
@@ -1194,7 +1481,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
 		for (ei=0; ei<dim_xz; ei++){
 			e = (ei%dim_x)*dim_y+(ei/dim_x)*dim_xy;
 
@@ -1229,7 +1516,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Z){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
 		for (ei=0; ei<dim_xy; ei++){
 			e = ei;
 
@@ -1264,7 +1551,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_YZ){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
 		for (ei=0; ei<dim_xz; ei++){
 			e = (ei%dim_x)*dim_y+(ei/dim_x)*dim_xy;
 
@@ -1299,7 +1586,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_XZ){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
 		for (ei=0; ei<dim_xy; ei++){
 			e = ei;
 
@@ -1334,7 +1621,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_XY){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
 		for (ei=0; ei<dim_xz; ei++){
 			e = (ei%dim_x)*dim_y+(ei/dim_x)*dim_xy;
 
@@ -1370,7 +1657,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 
 	unsigned int ii;
 
-	#pragma omp parallel for private(ii,C_i,C_j,C_k,C_x,C_y,C_z,d,thisCB,n)
+	#pragma omp parallel for private(ii,C_i,C_j,C_k,C_x,C_y,C_z,d,thisCB,n,scl)
 	for (e=0;e<model->m_nelem;e++){
 
 		thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
@@ -1468,27 +1755,89 @@ void printC_elastic_3D(hmgModel_t *model, char *dest){
 			  printf("\n");
 	  }
 	  printf("-------------------------------------------------------\n");
+	  if (model->m_hmg_thermal_expansion_flag == HMG_TRUE){
+	    printf("Effective thermal expansion:\n");
+	    printf("  %.8e  %.8e  %.8e\n",model->thermal_expansion[0],model->thermal_expansion[5],model->thermal_expansion[4]);
+	    printf("  %.8e  %.8e  %.8e\n",model->thermal_expansion[5],model->thermal_expansion[1],model->thermal_expansion[3]);
+		printf("  %.8e  %.8e  %.8e\n",model->thermal_expansion[4],model->thermal_expansion[3],model->thermal_expansion[2]);
+	    printf("-------------------------------------------------------\n");
+	  }
 	} else {
-	  sprintf(
-      dest,
-      "-------------------------------------------------------\n"\
-      "Homogenized Constitutive Matrix (Elasticity):\n"\
-      "  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
-      "  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
-      "  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
-      "  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
-      "  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
-      "  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
-      "-------------------------------------------------------\n",
-      model->C[0] , model->C[1] , model->C[2] , model->C[3] , model->C[4] , model->C[5],
-      model->C[6] , model->C[7] , model->C[8] , model->C[9] , model->C[10], model->C[11],
-      model->C[12], model->C[13], model->C[14], model->C[15], model->C[16], model->C[17],
-      model->C[18], model->C[19], model->C[20], model->C[21], model->C[22], model->C[23],
-      model->C[24], model->C[25], model->C[26], model->C[27], model->C[28], model->C[29],
-      model->C[30], model->C[31], model->C[32], model->C[33], model->C[34], model->C[35]
-    );
+	  if (model->m_hmg_thermal_expansion_flag == HMG_FALSE){
+		sprintf(
+		dest,
+		"-------------------------------------------------------\n"\
+		"Homogenized Constitutive Matrix (Elasticity):\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"-------------------------------------------------------\n",
+		model->C[0] , model->C[1] , model->C[2] , model->C[3] , model->C[4] , model->C[5],
+		model->C[6] , model->C[7] , model->C[8] , model->C[9] , model->C[10], model->C[11],
+		model->C[12], model->C[13], model->C[14], model->C[15], model->C[16], model->C[17],
+		model->C[18], model->C[19], model->C[20], model->C[21], model->C[22], model->C[23],
+		model->C[24], model->C[25], model->C[26], model->C[27], model->C[28], model->C[29],
+		model->C[30], model->C[31], model->C[32], model->C[33], model->C[34], model->C[35]
+		);
+	  } else {
+		sprintf(
+		dest,
+		"-------------------------------------------------------\n"\
+		"Homogenized Constitutive Matrix (Elasticity):\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e  %.8e  %.8e  %.8e\n"\
+		"-------------------------------------------------------\n"\
+        "Effective thermal expansion:\n"\
+        "  %.8e  %.8e  %.8e\n"\
+        "  %.8e  %.8e  %.8e\n"\
+		"  %.8e  %.8e  %.8e\n"\
+		"-------------------------------------------------------\n",
+		model->C[0] , model->C[1] , model->C[2] , model->C[3] , model->C[4] , model->C[5],
+		model->C[6] , model->C[7] , model->C[8] , model->C[9] , model->C[10], model->C[11],
+		model->C[12], model->C[13], model->C[14], model->C[15], model->C[16], model->C[17],
+		model->C[18], model->C[19], model->C[20], model->C[21], model->C[22], model->C[23],
+		model->C[24], model->C[25], model->C[26], model->C[27], model->C[28], model->C[29],
+		model->C[30], model->C[31], model->C[32], model->C[33], model->C[34], model->C[35],
+		model->thermal_expansion[0],model->thermal_expansion[5],model->thermal_expansion[4],
+		model->thermal_expansion[5],model->thermal_expansion[1],model->thermal_expansion[3],
+		model->thermal_expansion[4],model->thermal_expansion[3],model->thermal_expansion[2]
+		);
+	  }
   }
   return;
+}
+//------------------------------------------------------------------------------}
+void strainFromDispl_elastic_3D(var *s, var *d, var x, var y, var z){
+	var x1 = (1.0-x), y1 = (1.0-y), z1 = (1.0-z);
+	var B[144] = { -y1*z, 0.0, 0.0, y1*z, 0.0, 0.0, y*z, 0.0, 0.0, -y*z, 0.0, 0.0, -y1*z1, 0.0, 0.0, y1*z1, 0.0, 0.0, y*z1, 0.0, 0.0, -y*z1, 0.0, 0.0,
+	               0.0, -x1*z, 0.0, 0.0, -x*z, 0.0, 0.0, x*z, 0.0, 0.0, x1*z, 0.0, 0.0, -x1*z1, 0.0, 0.0, -x*z1, 0.0, 0.0, x*z1, 0.0, 0.0, x1*z1, 0.0,
+								 0.0, 0.0, x1*y1, 0.0, 0.0, x*y1, 0.0, 0.0, x*y, 0.0, 0.0, x1*y, 0.0, 0.0, -x1*y1, 0.0, 0.0, -x*y1, 0.0, 0.0, -x*y, 0.0, 0.0, -x1*y,
+								 0.0, x1*y1, -x1*z, 0.0, x*y1, -x*z, 0.0, x*y, x*z, 0.0, x1*y, x1*z, 0.0, -x1*y1, -x1*z1, 0.0, -x*y1, -x*z1, 0.0, -x*y, x*z1, 0.0, -x1*y, x1*z1,
+								 x1*y1, 0.0, -y1*z, x*y1, 0.0, y1*z, x*y, 0.0, y*z, x1*y, 0.0, -y*z, -x1*y1, 0.0, -y1*z1, -x*y1, 0.0, y1*z1, -x*y, 0.0, y*z1, -x1*y, 0.0, -y*z1,
+								 -x1*z, -y1*z, 0.0, -x*z, y1*z, 0.0, x*z, y*z, 0.0, x1*z, -y*z, 0.0, -x1*z1, -y1*z1, 0.0, -x*z1, y1*z1, 0.0, x*z1, y*z1, 0.0, x1*z1, -y*z1, 0.0 };
+
+	s[0] = 0.0;
+	s[1] = 0.0;
+	s[2] = 0.0;
+	s[3] = 0.0;
+	s[4] = 0.0;
+	s[5] = 0.0;
+	for (unsigned int i=0; i<24; i++){
+		s[0] +=     B[i] * d[i];
+		s[1] +=  B[i+24] * d[i];
+		s[2] +=  B[i+48] * d[i];
+		s[3] +=  B[i+72] * d[i];
+		s[4] +=  B[i+96] * d[i];
+		s[5] += B[i+120] * d[i];
+	}
+	return;
 }
 //------------------------------------------------------------------------------
 void stressFromDispl_elastic_3D(var *s, var *d, var E, var v, var x, var y, var z){
@@ -1522,6 +1871,60 @@ void stressFromDispl_elastic_3D(var *s, var *d, var E, var v, var x, var y, var 
 			c_xy += B[i+120] * d[i];
 		}
 		s[j] = C[j*6]*c_x + C[j*6+1]*c_y + C[j*6+2]*c_z + C[j*6+3]*c_yz + C[j*6+4]*c_xz + C[j*6+5]*c_xy;
+	}
+
+	return;
+}
+//------------------------------------------------------------------------------
+void stressFromAlpha_elastic_3D(var *s, var *a, var E, var v, var x, var y, var z){
+
+	var coeff = E/ ((1.0+v)*(1.0-2.0*v));
+	var C[36] = { coeff*(1.0-v), coeff*v, coeff*v, 0.0, 0.0, 0.0,
+						 	  coeff*v, coeff*(1.0-v), coeff*v, 0.0, 0.0, 0.0,
+								coeff*v, coeff*v, coeff*(1.0-v), 0.0, 0.0, 0.0,
+							  0.0, 0.0, 0.0, coeff*0.5*(1.0-2.0*v), 0.0, 0.0,
+							  0.0, 0.0, 0.0, 0.0, coeff*0.5*(1.0-2.0*v), 0.0,
+							  0.0, 0.0, 0.0, 0.0, 0.0, coeff*0.5*(1.0-2.0*v) };
+
+	for (unsigned int j=0; j<6; j++){
+		s[j] = 0.0;
+		for (unsigned int k=0; k<6; k++) s[j] += C[j*6+k]*a[k];
+	}
+	return;
+}
+//------------------------------------------------------------------------------
+void forceFromStrain_elastic_3D(var *f, var *a, var E, var v, var x, var y, var z){
+
+	var coeff = E/ ((1.0+v)*(1.0-2.0*v));
+	var C[36] = { coeff*(1.0-v), coeff*v, coeff*v, 0.0, 0.0, 0.0,
+						 	  coeff*v, coeff*(1.0-v), coeff*v, 0.0, 0.0, 0.0,
+								coeff*v, coeff*v, coeff*(1.0-v), 0.0, 0.0, 0.0,
+							  0.0, 0.0, 0.0, coeff*0.5*(1.0-2.0*v), 0.0, 0.0,
+							  0.0, 0.0, 0.0, 0.0, coeff*0.5*(1.0-2.0*v), 0.0,
+							  0.0, 0.0, 0.0, 0.0, 0.0, coeff*0.5*(1.0-2.0*v) };
+
+	var x1 = (1.0-x), y1 = (1.0-y), z1 = (1.0-z);
+	var B[144] = { -y1*z, 0.0, 0.0, y1*z, 0.0, 0.0, y*z, 0.0, 0.0, -y*z, 0.0, 0.0, -y1*z1, 0.0, 0.0, y1*z1, 0.0, 0.0, y*z1, 0.0, 0.0, -y*z1, 0.0, 0.0,
+	               0.0, -x1*z, 0.0, 0.0, -x*z, 0.0, 0.0, x*z, 0.0, 0.0, x1*z, 0.0, 0.0, -x1*z1, 0.0, 0.0, -x*z1, 0.0, 0.0, x*z1, 0.0, 0.0, x1*z1, 0.0,
+								 0.0, 0.0, x1*y1, 0.0, 0.0, x*y1, 0.0, 0.0, x*y, 0.0, 0.0, x1*y, 0.0, 0.0, -x1*y1, 0.0, 0.0, -x*y1, 0.0, 0.0, -x*y, 0.0, 0.0, -x1*y,
+								 0.0, x1*y1, -x1*z, 0.0, x*y1, -x*z, 0.0, x*y, x*z, 0.0, x1*y, x1*z, 0.0, -x1*y1, -x1*z1, 0.0, -x*y1, -x*z1, 0.0, -x*y, x*z1, 0.0, -x1*y, x1*z1,
+								 x1*y1, 0.0, -y1*z, x*y1, 0.0, y1*z, x*y, 0.0, y*z, x1*y, 0.0, -y*z, -x1*y1, 0.0, -y1*z1, -x*y1, 0.0, y1*z1, -x*y, 0.0, y*z1, -x1*y, 0.0, -y*z1,
+								 -x1*z, -y1*z, 0.0, -x*z, y1*z, 0.0, x*z, y*z, 0.0, x1*z, -y*z, 0.0, -x1*z1, -y1*z1, 0.0, -x*z1, y1*z1, 0.0, x*z1, y*z1, 0.0, x1*z1, -y*z1, 0.0 };
+				 
+	var S[144];
+	var *ptr;
+
+	for (unsigned int i=0; i<24; i++){
+		for (unsigned int j=0; j<6; j++){
+			S[6*i+j] = 0.0;
+			ptr = &S[6*i+j];
+			for (unsigned int k=0; k<6; k++) *ptr += B[i+24*k]*C[j+6*k];
+		}
+	}
+	
+	for (unsigned int i=0; i<24; i++){
+		f[i] = 0.0;
+		for (unsigned int k=0; k<6; k++) f[i] += S[6*i+k]*a[k];
 	}
 
 	return;

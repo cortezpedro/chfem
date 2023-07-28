@@ -2,7 +2,7 @@
 
 */
 
-#include "cg.h"
+#include "cg3.h"
 #include "../kernels/wrappers.h"
 
 //---------------------------------
@@ -12,17 +12,17 @@
 //---------------------------------
 
 //------------------------------------------------------------------------------
-cudapcgFlag_t setX0_cg(cudapcgSolver_t *solver, cudapcgVar_t *x0, cudapcgFlag_t mustInterpolate){
+cudapcgFlag_t setX0_cg3(cudapcgSolver_t *solver, cudapcgVar_t *x0, cudapcgFlag_t mustInterpolate){
   size_t var_sz = sizeof(cudapcgVar_t)*((size_t)solver->model->nvars);
   if (solver->x == NULL)
       HANDLE_ERROR(cudaMalloc(&solver->x,var_sz));
   if (mustInterpolate){
-      if (solver->q == NULL)
-          HANDLE_ERROR(cudaMalloc(&solver->q,var_sz));
+      if (solver->d == NULL)
+          HANDLE_ERROR(cudaMalloc(&solver->d,var_sz));
       unsigned int nodal_dofs = solver->model->nvars/solver->model->nelem;
       size_t coarse_var_sz = sizeof(cudapcgVar_t)*nodal_dofs*((solver->model->ncols)/2)*((solver->model->nrows)/2)*((solver->model->nlayers)/2+(solver->model->nlayers<2));
-      HANDLE_ERROR(cudaMemcpy(solver->q,x0,coarse_var_sz,cudaMemcpyHostToDevice));
-      interpl2(solver->q,solver->model->nrows,solver->model->ncols,solver->model->nlayers,solver->model->nvars/solver->model->nelem,solver->x);
+      HANDLE_ERROR(cudaMemcpy(solver->d,x0,coarse_var_sz,cudaMemcpyHostToDevice));
+      interpl2(solver->d,solver->model->nrows,solver->model->ncols,solver->model->nlayers,solver->model->nvars/solver->model->nelem,solver->x);
   } else {
       HANDLE_ERROR(cudaMemcpy(solver->x,x0,var_sz,cudaMemcpyHostToDevice));
   }
@@ -30,36 +30,28 @@ cudapcgFlag_t setX0_cg(cudapcgSolver_t *solver, cudapcgVar_t *x0, cudapcgFlag_t 
   return CUDAPCG_TRUE;
 }
 //------------------------------------------------------------------------------
-cudapcgFlag_t allocDeviceArrays_cg(cudapcgSolver_t *solver){
+cudapcgFlag_t allocDeviceArrays_cg3(cudapcgSolver_t *solver){
   size_t sz = sizeof(cudapcgVar_t)*solver->model->nvars;
   if (!solver->x0_hasBeenSet_flag) HANDLE_ERROR(cudaMalloc(&solver->x,sz));
-  if (solver->q == NULL)           HANDLE_ERROR(cudaMalloc(&solver->q,sz));
-                                   HANDLE_ERROR(cudaMalloc(&solver->d,sz));
-  if (solver->mustAssemblePreConditioner){
-      allocPreConditioner(solver->model);
-      solver->assemblePreConditioner(solver->model);
-  }
+  if (solver->d == NULL)           HANDLE_ERROR(cudaMalloc(&solver->d,sz));
   // allocate arrays that will be used to store dotprod kernel results (within cudapcg_kernels.h)
   allocDotProdArrs(solver->model->nvars);
   solver->userAllocatedArrays_flag = CUDAPCG_TRUE;
   return CUDAPCG_TRUE;
 }
 //------------------------------------------------------------------------------
-cudapcgFlag_t freeDeviceArrays_cg(cudapcgSolver_t *solver){
+cudapcgFlag_t freeDeviceArrays_cg3(cudapcgSolver_t *solver){
   if (!(solver->x0_hasBeenSet_flag)){
     if (solver->x!=NULL) HANDLE_ERROR(cudaFree(solver->x));
     solver->x = NULL;
   }
   if (solver->d!=NULL) HANDLE_ERROR(cudaFree(solver->d)); solver->d = NULL;
-  if (solver->q!=NULL) HANDLE_ERROR(cudaFree(solver->q)); solver->q = NULL;
-  if (solver->mustAssemblePreConditioner)
-      freePreConditioner();
   freeDotProdArrs();
   solver->userAllocatedArrays_flag = CUDAPCG_FALSE;
   return CUDAPCG_TRUE;
 }
 //------------------------------------------------------------------------------
-cudapcgFlag_t solve_cg(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
+cudapcgFlag_t solve_cg3(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     if (solver == NULL)
         return CUDAPCG_FALSE;
 
@@ -68,7 +60,6 @@ cudapcgFlag_t solve_cg(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     cudapcgVar_t *x = solver->x;
     cudapcgVar_t *r = solver->r;
     cudapcgVar_t *d = solver->d;
-    cudapcgVar_t *q = solver->q;
 
     unsigned int n = solver->model->nvars;
     unsigned int n_stopping_criteria = solver->model->nhmgvars;
@@ -87,7 +78,6 @@ cudapcgFlag_t solve_cg(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
 
     if (!solver->x0_hasBeenSet_flag)
       zeros(x,n);
-    zeros(q,n);
 
     double a, delta, delta_0, delta_old, stop_metric, res_0;
     unsigned char mustContinueIterating = 1;
@@ -116,8 +106,7 @@ cudapcgFlag_t solve_cg(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     // check if an initial guess was provided
     if (solver->x0_hasBeenSet_flag){
       // recalculate resiudals considering initial guess
-      solver->Aprod(model,x,1.0,0.0,q);              // q = A*x
-      axpy_iny(r,q,-1.0,n);                          // r += -q
+      solver->Aprod(model,x,-1.0,1.0,r);             // r = -A*x + r
       delta = dotprod(r,r,n);                        // delta = r*r
       // Check if initial guess has already satisfied dimensionless tolerance
       if (!isResidualAboveTol(delta,delta_0,solver->num_tol)){
@@ -151,10 +140,9 @@ cudapcgFlag_t solve_cg(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     // First iteration outside of while loop
     solver->iteration++;
     arrcpy(r,n,d);
-    solver->Aprod(model,d,1.0,0.0,q);              // q = A*d
-    a = delta / dotprod(d,q,n);                    // a = delta/(d*q)
+    a = delta / solver->dotAprod(model,d,1.0);     // a = delta/dot(d,A*d)
     axpy_iny(x,d,a,n);                             // x += a*d
-    axpy_iny(r,q,-a,n);                            // r += -a*q
+    solver->Aprod(model,d,-a,1.0,r);               // r = -a*A*d + r
     delta = dotprod(r,r,n);                        // delta = r*r
 
     switch (solver->resnorm_flag){
@@ -192,10 +180,9 @@ cudapcgFlag_t solve_cg(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
 
         solver->iteration++;
         axpy(r,d,delta/delta_old,n,d);                // d = r+(delta/delta_old)*d
-        solver->Aprod(model,d,1.0,0.0,q);             // q = A*d
-        a = delta / dotprod(d,q,n);                   // a = delta/(d*q)
+        a = delta / solver->dotAprod(model,d,1.0);    // a = delta/dot(d,A*d)
         axpy_iny(x,d,a,n);                            // x += a*d
-        axpy_iny(r,q,-a,n);                           // r += -a*q
+        solver->Aprod(model,d,-a,1.0,r);              // r = -a*A*d + r
         delta_old = delta;
         delta = dotprod(r,r,n);                       // delta = r*r
 

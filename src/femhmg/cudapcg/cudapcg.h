@@ -46,7 +46,13 @@ extern "C" {
   cudapcgFlag_t cudapcgSetNumTol(cudapcgTol_t t);
   cudapcgFlag_t cudapcgSetMaxIterations(unsigned int n);
 
+  cudapcgFlag_t cudapcgSetXReduceMode(cudapcgFlag_t flag);
+  cudapcgFlag_t cudapcgSetXReduceShift(unsigned int shift);
+  cudapcgFlag_t cudapcgSetXReduceScale(double scl);
+  cudapcgFlag_t cudapcgSetReduceStabFactor(double scl);
+
   cudapcgFlag_t cudapcgSetSolver(cudapcgFlag_t flag);
+  cudapcgFlag_t cudapcgSetPreconditioner(cudapcgFlag_t flag);
   cudapcgFlag_t cudapcgSetResNorm(cudapcgFlag_t flag);
   
   cudapcgFlag_t cudapcgAllocateArrays();

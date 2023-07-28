@@ -42,6 +42,7 @@
 #define HOMOGENIZE_XZ 4
 #define HOMOGENIZE_XY 5
 #define HOMOGENIZE_ALL 6
+#define HOMOGENIZE_THERMAL_EXPANSION 7
 
 #define HMG_FLOAT32 0
 #define HMG_FLOAT64 1
@@ -74,6 +75,7 @@ typedef struct _hmgmodel{
     cudapcgFlag_t m_pcg_flag;
     logical m_hmg_flag_was_set;
     logical m_using_x0_flag;
+    logical m_hmg_thermal_expansion_flag;
 
     cudapcgFlag_t poremap_flag;
 
@@ -85,6 +87,7 @@ typedef struct _hmgmodel{
     unsigned int m_lclCB_dim;
 
     var props[PROPS_ARRAY_SIZE];
+    var alpha[MAX_COLORNUM];
     unsigned char props_keys[MAX_COLORNUM]; // data is 8bit
 
     double density_max;
@@ -101,6 +104,7 @@ typedef struct _hmgmodel{
     cudapcgVar_t * RHS;
     cudapcgVar_t ** x0;
     var * C;
+    var * thermal_expansion;
     cudapcgFlag_t * pore_border_fluidkeys;
     cudapcgIdMap_t * pore_dof2node_map;
 
