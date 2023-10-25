@@ -132,9 +132,6 @@ cudapcgFlag_t solve_minres(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     }
     delta_old = delta;
 
-    arrcpy(r,n,d);
-    arrcpy(s,n,q);
-
     #ifdef CUDAPCG_TRACK_STOPCRIT
     switch (solver->resnorm_flag){
       case CUDAPCG_L2_NORM:
@@ -153,6 +150,8 @@ cudapcgFlag_t solve_minres(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
 
     // First iteration outside of while loop
     solver->iteration++;
+    arrcpy(r,n,d);
+    arrcpy(s,n,q);
     a = delta / dotprod(q,q,n);                    // a = delta/(q*q)
     axpy_iny(x,d,a,n);                             // x += a*d
     axpy_iny(r,q,-a,n);                            // r += -a*q

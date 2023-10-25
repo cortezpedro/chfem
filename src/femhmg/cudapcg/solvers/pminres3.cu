@@ -120,8 +120,8 @@ cudapcgFlag_t solve_pminres3(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     solver->applyPreConditioner(model,r,NULL,1.0,0.0,d);         // d = M^-1 * r 
     a = delta / solver->dotPreConditionerA2prod(model,d,1.0);    // a = delta/dot(Ad,M^-1*Ad)
     axpy_iny(x,d, a,n);                                          // x +=  a*d
-    arrcpy(d,n,r);                                               // r = d =  M^-1 * r (at this point)
-    solver->PreConditionerAprod(model,d,-a,1.0,r);               // r = -a*M^-1 *A*d + r
+    solver->Aprod(model,d,-a,1.0,r);                             // r = -a*A*d + r
+    solver->applyPreConditioner(model,r,NULL,1.0,0.0,r);         // r = M^-1 * r 
     delta = solver->dotAprod(model,r,1.0);                       // delta = dot(r,A*r)
     solver->applyinvPreConditioner(model,r,NULL,1.0,0.0,r);      // r = M * r (important for stopping criteria)
 
@@ -162,11 +162,11 @@ cudapcgFlag_t solve_pminres3(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
 
         solver->iteration++;
         b = delta/delta_old;
-        solver->applyPreConditioner(model,r,NULL,1.0,0.0,r);       // r = M^-1 * r
-        axpy(r,d,b,n,d);                                           // d = r+b*d
+        solver->applyPreConditioner(model,r,d,1.0,b,d);            // d = M^-1*r+b*d
         a = delta / solver->dotPreConditionerA2prod(model,d,1.0);  // a = delta/dot(Ad,M^-1*Ad)
         axpy_iny(x,d, a,n);                                        // x +=  a*d
-        solver->PreConditionerAprod(model,d,-a,1.0,r);             // r = -a*M^-1*A*d + r
+        solver->Aprod(model,d,-a,1.0,r);                           // r = -a*A*d + r
+        solver->applyPreConditioner(model,r,NULL,1.0,0.0,r);       // r = M^-1 * r 
         delta_old = delta;
         delta = solver->dotAprod(model,r,1.0);                     // delta = dot(r,A*r)
         solver->applyinvPreConditioner(model,r,NULL,1.0,0.0,r);    // r = M * r (important for stopping criteria)

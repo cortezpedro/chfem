@@ -241,27 +241,27 @@ double absreduce(cudapcgVar_t *v, unsigned int dim){
 //------------------------------------------------------------------------------
 double reduce_with_stride(cudapcgVar_t *v, unsigned int dim, unsigned int stride, unsigned int shift){
   #ifdef NO_XREDUCE_STAB
+  kernel_reduce_with_stride<cudapcgVar_t><<<CEIL(dim/stride,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim/stride,stride,shift,dot_res_1);
+  return reduce_dot_res_1(dim);
+  #else
   kernel_reduce_positive_values_with_stride<cudapcgVar_t><<<CEIL(dim/stride,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim/stride,stride,shift,dot_res_1);
   double result = reduce_dot_res_1(dim);
   kernel_reduce_negative_values_with_stride<cudapcgVar_t><<<CEIL(dim/stride,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim/stride,stride,shift,dot_res_1);
   result += reduce_dot_res_1(dim);
   return result;
-  #else
-  kernel_reduce_with_stride<cudapcgVar_t><<<CEIL(dim/stride,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim/stride,stride,shift,dot_res_1);
-  return reduce_dot_res_1(dim);
   #endif
 }
 //------------------------------------------------------------------------------
 double reduce_with_stride_and_scale(cudapcgVar_t *v, unsigned int dim, unsigned int stride, unsigned int shift, cudapcgVar_t scl){
-  #ifdef XREDUCE_POS_NEG
+  #ifdef NO_XREDUCE_STAB
+  kernel_reduce_with_stride_and_scale<cudapcgVar_t><<<CEIL(dim/stride,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim/stride,stride,shift,scl,dot_res_1);
+  return reduce_dot_res_1(dim);
+  #else
   kernel_reduce_positive_values_with_stride_and_scale<cudapcgVar_t><<<CEIL(dim/stride,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim/stride,stride,shift,scl,dot_res_1);
   double result = reduce_dot_res_1(dim);
   kernel_reduce_negative_values_with_stride_and_scale<cudapcgVar_t><<<CEIL(dim/stride,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim/stride,stride,shift,scl,dot_res_1);
   result += reduce_dot_res_1(dim);
   return result;
-  #else
-  kernel_reduce_with_stride_and_scale<cudapcgVar_t><<<CEIL(dim/stride,THREADS_PER_BLOCK),THREADS_PER_BLOCK>>>(v,dim/stride,stride,shift,scl,dot_res_1);
-  return reduce_dot_res_1(dim);
   #endif
 }
 //------------------------------------------------------------------------------
