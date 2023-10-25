@@ -67,8 +67,9 @@ cudapcgFlag_t solve_pminres(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     else
       res_0 = solver->dotPreConditioner(model,r,NULL,1.0); // res_0 = dot(r,M^-1*r)
 
-    solver->applyPreConditioner(model,r,NULL,1.0,0.0,s);  // s = M^-1 *r
-    delta_0 = solver->dotAprod(model,s,1.0);              // delta = dot(s,A*s)
+    solver->applyPreConditioner(model,r,NULL,1.0,0.0,q);  // q = M^-1 *r
+    solver->Aprod(model,q,1.0,0.0,s);                     // s = A*q
+    delta_0 = dotprod(q,s,n);                             // delta = dot(q,s)
 
     // Check if x0=[0] has already satisfied an absolute tolerance
     // This is a safety check. As we perform dimensionless residual evaluation, with
@@ -86,8 +87,9 @@ cudapcgFlag_t solve_pminres(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
     if (solver->x0_hasBeenSet_flag){
       // recalculate resiudals considering initial guess
       solver->Aprod(model,x,-1.0,1.0,r);             // r += -1.0*A*x
-      solver->applyPreConditioner(model,r,NULL,1.0,0.0,s);  // s = M^-1 *r
-      delta = solver->dotAprod(model,s,1.0);                // delta = dot(s,A*s)
+      solver->applyPreConditioner(model,r,NULL,1.0,0.0,q);  // q = M^-1 *r
+      solver->Aprod(model,q,1.0,0.0,s);                     // s = A*q
+      delta = dotprod(q,s,n);                               // delta = dot(q,s)
       // Check if initial guess has already satisfied dimensionless tolerance
       if (!isResidualAboveTol(delta,delta_0,solver->num_tol)){
           solver->residual = evalResidual(delta,delta_0);
@@ -121,8 +123,8 @@ cudapcgFlag_t solve_pminres(cudapcgSolver_t *solver, cudapcgVar_t *res_x){
 
     // First iteration outside of while loop
     solver->iteration++;
-    arrcpy(s,n,d);                                        // d = s = M^-1 * r (at this point)
-    solver->Aprod(model,d,1.0,0.0,q);                     // q = A*d
+    arrcpy(q,n,d);                                        // d = q = M^-1 * r (at this point)
+    arrcpy(s,n,q);                                        // q = s = A * M^-1 * r (at this point)
     a = delta / solver->dotPreConditioner(model,q,NULL,1.0); // a = delta/dot(q,M^-1*q)
     axpy_iny(x,d,a,n);                                    // x += a*d
     axpy_iny(r,q,-a,n);                                   // r += -a*q
