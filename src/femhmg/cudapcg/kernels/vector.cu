@@ -388,6 +388,76 @@ __global__ void kernel_reduce_negative_values_with_stride_and_scale(T *v, unsign
 template __global__ void kernel_reduce_negative_values_with_stride_and_scale<float>(float *v, unsigned int n, unsigned int stride, unsigned int shift, float scl, double *res);
 template __global__ void kernel_reduce_negative_values_with_stride_and_scale<double>(double *v, unsigned int n, unsigned int stride, unsigned int shift, double scl, double *res);
 //------------------------------------------------------------------------------
+template<typename T>
+__global__ void kernel_reduce_gtthreshold_values_with_stride_and_scale(T *v, unsigned int n, unsigned int stride, unsigned int shift, T scl, T t, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  v += shift; // offset pointer by shfit
+  double val;
+  if (gi < n){
+    val = (double)v[stride*gi];
+    cache[li] = fabs(val) > t ? (scl*val) : 0.0;
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+template __global__ void kernel_reduce_gtthreshold_values_with_stride_and_scale<float>(float *v, unsigned int n, unsigned int stride, unsigned int shift, float scl, float t, double *res);
+template __global__ void kernel_reduce_gtthreshold_values_with_stride_and_scale<double>(double *v, unsigned int n, unsigned int stride, unsigned int shift, double scl, double t, double *res);
+//------------------------------------------------------------------------------
+template<typename T>
+__global__ void kernel_reduce_lethreshold_values_with_stride_and_scale(T *v, unsigned int n, unsigned int stride, unsigned int shift, T scl, T t, double *res){
+  unsigned int li = threadIdx.x;
+  unsigned int gi = li + blockIdx.x * blockDim.x;
+  __shared__ double cache[THREADS_PER_BLOCK];
+  v += shift; // offset pointer by shfit
+  double val;
+  if (gi < n){
+    val = (double)v[stride*gi];
+    cache[li] = fabs(val) <= t ? (scl*val) : 0.0;
+  } else
+    cache[li] = 0.0;
+  __syncthreads();
+  #if THREADS_PER_BLOCK >= 1024
+    if (li<512) cache[li] += cache[li+512]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 512
+    if (li<256) cache[li] += cache[li+256]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 256
+    if (li<128) cache[li] += cache[li+128]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 128
+    if (li<64) cache[li] += cache[li+64]; __syncthreads();
+  #endif
+  #if THREADS_PER_BLOCK >= 64
+    if (li<32) cache[li] += cache[li+32]; __syncthreads();
+  #endif
+  REDUCE_WARP(cache,li);
+  if (li == 0)
+    res[blockIdx.x] = cache[0];
+}
+template __global__ void kernel_reduce_lethreshold_values_with_stride_and_scale<float>(float *v, unsigned int n, unsigned int stride, unsigned int shift, float scl, float t, double *res);
+template __global__ void kernel_reduce_lethreshold_values_with_stride_and_scale<double>(double *v, unsigned int n, unsigned int stride, unsigned int shift, double scl, double t, double *res);
+//------------------------------------------------------------------------------
 // Kernel to perform dot product between two vectors, using shared mem
 template<typename T>
 __global__ void kernel_dotprod(T *v1, T *v2, unsigned int n, double *res){
