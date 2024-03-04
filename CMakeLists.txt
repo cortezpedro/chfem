@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD 99)
 
 # Find OpenMP
 find_package(OpenMP REQUIRED)
+find_package(Python COMPONENTS Interpreter Development)
 
 # Optional: specify the CUDA architecture
 set(CMAKE_CUDA_ARCHITECTURES 75)
@@ -13,7 +14,7 @@ set(CMAKE_CUDA_ARCHITECTURES 75)
 # Include directories
 include_directories("chfem")
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
-include_directories("/nobackup/fsemerar/.conda/envs/chfem/include/python3.12")
+include_directories(${Python_INCLUDE_DIRS})
 
 # File GLOB_RECURSE to collect all the source files
 file(GLOB_RECURSE CUDA_SOURCES "chfem/**/*.cu")
