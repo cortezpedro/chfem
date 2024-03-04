@@ -72,7 +72,7 @@ unsigned char readInput(char *arr[], unsigned int sz, chfemgpuInput_t * user_inp
 void initDefaultInput(chfemgpuInput_t * user_input);
 
 //------------------------------------------------------------------------------
-int main(int argc, char * argv[]){
+int run_chfem(int argc, char * argv[]){
 
   // Initialize input struct
   chfemgpuInput_t * user_input = (chfemgpuInput_t *) malloc(sizeof(chfemgpuInput_t));
@@ -169,6 +169,10 @@ int main(int argc, char * argv[]){
   printf("#######################################################\n");
 
   return 0;
+}
+
+int main(int argc, char *argv[]) {
+    return run_chfem(argc, argv);
 }
 //------------------------------------------------------------------------------
 void printHelp(){

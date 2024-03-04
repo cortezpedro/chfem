@@ -6,6 +6,8 @@
 #ifndef INCLUDES_H_INCLUDED
 #define INCLUDES_H_INCLUDED
 
+int run_chfem(int argc, char *argv[]);
+
 // Defines struct type for input info
 typedef struct _input{
 
