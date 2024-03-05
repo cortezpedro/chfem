@@ -2,6 +2,7 @@ from setuptools import setup, Extension, find_packages
 from setuptools.command.build_ext import build_ext
 import os, glob, subprocess
 from pathlib import Path
+import numpy as np
 
 class CustomBuildExt(build_ext):
     def run(self):
@@ -18,6 +19,7 @@ class CustomBuildExt(build_ext):
                 compile_command = f"nvcc  -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}" + \
                     ' '.join([f" -I{include_dir}" for include_dir in self.include_dirs])
             
+            self.include_dirs.append(np.get_include())
             subprocess.check_call(compile_command, shell=True)
         ext.sources = []
         super().run()  # Continue with the regular build process

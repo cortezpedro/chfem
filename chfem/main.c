@@ -66,14 +66,9 @@
 #include "includes.h"
 
 //------------------------------------------------------------------------------
-void printHelp();
-unsigned int findFlag(const char *flag, char *arr[], unsigned int sz);
-unsigned char readInput(char *arr[], unsigned int sz, chfemgpuInput_t * user_input);
-void initDefaultInput(chfemgpuInput_t * user_input);
 
-//------------------------------------------------------------------------------
-int run_chfem(int argc, char * argv[]){
-
+int main(int argc, char *argv[]) {
+    
   // Initialize input struct
   chfemgpuInput_t * user_input = (chfemgpuInput_t *) malloc(sizeof(chfemgpuInput_t));
   initDefaultInput(user_input);
@@ -92,13 +87,17 @@ int run_chfem(int argc, char * argv[]){
   printf("#######################################################\n");
 
   // Initialize FEM model for homogenization
-  if (!hmgInit(user_input->neutral_file,user_input->raw_file,user_input->sdf_bin_file)){
+  if (!hmgInit(user_input->neutral_file,user_input->raw_file,user_input->sdf_bin_file, NULL)){
     printf("Failed to properly read input files.\nProcess aborted.\n");
     printf("#######################################################\n");
     free(user_input);
     return -1;
   }
 
+  return run_analysis(user_input);
+}
+
+int run_analysis(chfemgpuInput_t * user_input){
   // Keep track of metrics in a report file
   if (user_input->writeReport_flag)
     hmgKeepTrackOfAnalysisReport(REPORT_TRUE);
@@ -171,9 +170,6 @@ int run_chfem(int argc, char * argv[]){
   return 0;
 }
 
-int main(int argc, char *argv[]) {
-    return run_chfem(argc, argv);
-}
 //------------------------------------------------------------------------------
 void printHelp(){
   printf("\nComputational Homogenization with the image-based FEM in GPU - v1.2 - (2020-2023) - LCC UFF\n\n");

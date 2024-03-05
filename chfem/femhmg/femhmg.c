@@ -59,9 +59,10 @@ double xreduce_scale_factor=0.0001;
 
 //------------------------------------------------------------------------------
 logical readData(char * filename);
-logical readMaterialMap(char * filename);
+logical readMaterialMap(char * filename, uint8_t* data);
 logical readMaterialMapNF(char * filename);
 logical readMaterialMapRAW(char * filename);
+logical readMaterialMapNumpy(uint8_t* data);
 logical readScalarDensityFieldMap(char * filename);
 logical setAnalysisType();
 void free_model_arrs(hmgModel_t * model);
@@ -117,7 +118,7 @@ cudapcgFlag_t cudapcgModel_constructor(cudapcgModel_t **ptr, const void *data){
 //---------------------------------
 
 //------------------------------------------------------------------------------
-logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename){
+logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename, uint8_t* data){
 
   // Initialize time metric
   time_total = omp_get_wtime();
@@ -210,9 +211,9 @@ logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename)
       free(hmgModel);
       return HMG_FALSE;
   }
-  
+
   // Read elem map input file
-  if (!readMaterialMap(elem_filename)){
+  if (!readMaterialMap(elem_filename, data)){
     free(hmgModel->elem_material_map);
     free(hmgModel);
     return HMG_FALSE;
@@ -488,7 +489,7 @@ logical hmgSetPoreMappingStrategy(cudapcgFlag_t flag){
       printf("ERROR: Failed to allocate memory for image.\n");
       return HMG_FALSE;
     }
-    if (!readMaterialMap(hmgModel->imageFile)){
+    if (!readMaterialMap(hmgModel->imageFile, NULL)){
       printf("ERROR: Failed to read image from %s.\n",hmgModel->imageFile);
       return HMG_FALSE;
     }
@@ -1489,15 +1490,16 @@ logical readData(char * filename){
   return HMG_TRUE;
 }
 //------------------------------------------------------------------------------
-logical readMaterialMap(char * filename){
+logical readMaterialMap(char * filename, uint8_t* data){
   // Check file format before reading
   unsigned long int str_len = strlen(filename);
-  if (str_len < 3)
-    return HMG_FALSE;
   if (!strcmp(&filename[str_len-3],".nf"))
     return readMaterialMapNF(filename);
-  if (!strcmp(&filename[str_len-4],".raw"))
+  if (!strcmp(&filename[str_len-4],".raw")){
     return readMaterialMapRAW(filename);
+  } else if (data != NULL){
+    return readMaterialMapNumpy(data);
+  }
   printf("ERROR: file %s is not in a valid format.\n",filename);
   return HMG_FALSE;
 }
@@ -1607,6 +1609,52 @@ logical readMaterialMapRAW(char * filename){
   }
   printf(" ERROR: Failed to open file.\n");
   return HMG_FALSE;
+}
+//------------------------------------------------------------------------------
+logical readMaterialMapNumpy(uint8_t* data){
+  unsigned int i, j, k, ii, jj, kk;
+  unsigned int rows = (hmgModel->m_ny-1) / hmgModel->m_mesh_refinement;
+  unsigned int cols = (hmgModel->m_nx-1) / hmgModel->m_mesh_refinement;
+  unsigned int rows_ref = hmgModel->m_ny-1;
+  unsigned int cols_ref = hmgModel->m_nx-1;
+  unsigned int slices;
+  if (hmgModel->m_dim_flag == HMG_3D)
+    slices = (hmgModel->m_nz-1) / hmgModel->m_mesh_refinement;
+  else
+    slices = 1;
+  printf("\r    Getting image from .raw...[%3d%%]",0);
+  // Loops to transpose data. Raw file is line by line, our indexing is
+  // column by column. First slice runs out of loop (2D).
+  k=0;
+  unsigned int dataIndex = 0;
+  for (i = 0; i<rows; i++){
+    for (j = 0; j<cols; j++){
+      for (kk = hmgModel->m_mesh_refinement*k; kk<(hmgModel->m_mesh_refinement*(k+1)*(hmgModel->m_nz>0)+(hmgModel->m_nz<1)); kk++){
+        for (ii = hmgModel->m_mesh_refinement*i; ii<hmgModel->m_mesh_refinement*(i+1); ii++){
+          for (jj = hmgModel->m_mesh_refinement*j; jj<hmgModel->m_mesh_refinement*(j+1); jj++){
+            hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[data[dataIndex++]];
+          }
+        }
+      }
+    }
+    printf("\r    Getting image from numpy...[%3d%%]",((i+1)*100)/(slices*rows));
+  }
+  for (k = 1; k<slices; k++){
+    for (i = 0; i<rows; i++){
+      for (j = 0; j<cols; j++){
+        for (kk = hmgModel->m_mesh_refinement*k; kk<(hmgModel->m_mesh_refinement*(k+1)*(hmgModel->m_nz>0)+(hmgModel->m_nz<1)); kk++){
+          for (ii = hmgModel->m_mesh_refinement*i; ii<hmgModel->m_mesh_refinement*(i+1); ii++){
+            for (jj = hmgModel->m_mesh_refinement*j; jj<hmgModel->m_mesh_refinement*(j+1); jj++){
+              hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[data[dataIndex++]];
+            }
+          }
+        }
+      }
+    }
+    printf("\r    Getting image from numpy...[%3d%%]",((k+1)*100)/slices);
+  }
+  printf("\n");
+  return HMG_TRUE;
 }
 //------------------------------------------------------------------------------
 logical readScalarDensityFieldMap(char * filename){

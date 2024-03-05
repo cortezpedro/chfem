@@ -29,7 +29,7 @@
 #ifndef FEMHMG_H_INCLUDED
 #define FEMHMG_H_INCLUDED
 
-logical hmgInit(char * data_filename, char * elem_filename, char *sdf_filename);
+logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename, uint8_t* data);
 logical hmgEnd();
 
 void hmgSetXReduceFlag(cudapcgFlag_t flag);

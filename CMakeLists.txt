@@ -15,6 +15,12 @@ set(CMAKE_CUDA_ARCHITECTURES 75)
 include_directories("chfem")
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 include_directories(${Python_INCLUDE_DIRS})
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -c "import numpy; print(numpy.get_include())"
+    OUTPUT_VARIABLE NUMPY_INCLUDE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+include_directories(${NUMPY_INCLUDE_DIR})
 
 # File GLOB_RECURSE to collect all the source files
 file(GLOB_RECURSE CUDA_SOURCES "chfem/**/*.cu")
