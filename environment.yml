@@ -7,8 +7,5 @@ dependencies:
   - pip
   - cmake
   - numpy
-  - scikit-image
-  - matplotlib
-  - pyvista
   - pocl
   # - cudatoolkit-dev

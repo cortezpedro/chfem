@@ -94,10 +94,10 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  return run_analysis(user_input);
+  return runAnalysis(user_input);
 }
 
-int run_analysis(chfemgpuInput_t * user_input){
+int runAnalysis(chfemgpuInput_t * user_input){
   // Keep track of metrics in a report file
   if (user_input->writeReport_flag)
     hmgKeepTrackOfAnalysisReport(REPORT_TRUE);

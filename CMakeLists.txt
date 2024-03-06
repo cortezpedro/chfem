@@ -23,9 +23,9 @@ execute_process(
 include_directories(${NUMPY_INCLUDE_DIR})
 
 # File GLOB_RECURSE to collect all the source files
-file(GLOB_RECURSE CUDA_SOURCES "chfem/**/*.cu")
-file(GLOB_RECURSE C_SOURCES "chfem/**/*.c")
-list(APPEND C_SOURCES "chfem/main.c")
+file(GLOB_RECURSE CUDA_SOURCES "pychfem/chfem/**/*.cu")
+file(GLOB_RECURSE C_SOURCES "pychfem/chfem/**/*.c")
+list(APPEND C_SOURCES "pychfem/chfem/main.c")
 
 # chfem Executable
 add_executable(chfem ${CUDA_SOURCES} ${C_SOURCES})
@@ -34,12 +34,12 @@ target_link_libraries(chfem PUBLIC OpenMP::OpenMP_C)
 set_target_properties(chfem PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}" OUTPUT_NAME "chfem_gpu")
 
 # wrapper library
-set(WRAPPER_SOURCES "chfem/main_wrapper.c")
+set(WRAPPER_SOURCES "pychfem/chfem/chfem_wrapper.c")
 add_library(wrapper SHARED ${CUDA_SOURCES} ${C_SOURCES} ${WRAPPER_SOURCES})
 target_compile_options(wrapper PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:${OpenMP_C_FLAGS}>)
 target_compile_options(wrapper PRIVATE $<$<COMPILE_LANGUAGE:C>:-fopenmp>)
 target_link_libraries(wrapper PUBLIC OpenMP::OpenMP_C)
 set_target_properties(wrapper PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set_target_properties(wrapper PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/chfem")
+set_target_properties(wrapper PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/pychfem")
 set_target_properties(wrapper PROPERTIES PREFIX "")  # avoid the "lib" prefix
-set_target_properties(wrapper PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/chfem" OUTPUT_NAME "wrapper.cpython-312-x86_64-linux-gnu")
+set_target_properties(wrapper PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/pychfem" OUTPUT_NAME "wrapper.cpython-312-x86_64-linux-gnu")

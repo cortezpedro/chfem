@@ -45,7 +45,7 @@ void printHelp();
 unsigned int findFlag(const char *flag, char *arr[], unsigned int sz);
 unsigned char readInput(char *arr[], unsigned int sz, chfemgpuInput_t * user_input);
 void initDefaultInput(chfemgpuInput_t * user_input);
-int run_analysis(chfemgpuInput_t * user_input);
+int runAnalysis(chfemgpuInput_t * user_input);
 
 //------------------------------------------------------------------------------
 // Error handling when reading input

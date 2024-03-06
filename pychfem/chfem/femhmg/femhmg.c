@@ -59,10 +59,10 @@ double xreduce_scale_factor=0.0001;
 
 //------------------------------------------------------------------------------
 logical readData(char * filename);
-logical readMaterialMap(char * filename, uint8_t* data);
+logical readMaterialMap(char * filename, uint8_t* npdata);
 logical readMaterialMapNF(char * filename);
 logical readMaterialMapRAW(char * filename);
-logical readMaterialMapNumpy(uint8_t* data);
+logical readMaterialMapNumpy(uint8_t* npdata);
 logical readScalarDensityFieldMap(char * filename);
 logical setAnalysisType();
 void free_model_arrs(hmgModel_t * model);
@@ -118,7 +118,7 @@ cudapcgFlag_t cudapcgModel_constructor(cudapcgModel_t **ptr, const void *data){
 //---------------------------------
 
 //------------------------------------------------------------------------------
-logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename, uint8_t* data){
+logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename, uint8_t* npdata){
 
   // Initialize time metric
   time_total = omp_get_wtime();
@@ -213,7 +213,7 @@ logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename,
   }
 
   // Read elem map input file
-  if (!readMaterialMap(elem_filename, data)){
+  if (!readMaterialMap(elem_filename, npdata)){
     free(hmgModel->elem_material_map);
     free(hmgModel);
     return HMG_FALSE;
@@ -1490,15 +1490,17 @@ logical readData(char * filename){
   return HMG_TRUE;
 }
 //------------------------------------------------------------------------------
-logical readMaterialMap(char * filename, uint8_t* data){
-  // Check file format before reading
-  unsigned long int str_len = strlen(filename);
-  if (!strcmp(&filename[str_len-3],".nf"))
-    return readMaterialMapNF(filename);
-  if (!strcmp(&filename[str_len-4],".raw")){
-    return readMaterialMapRAW(filename);
-  } else if (data != NULL){
-    return readMaterialMapNumpy(data);
+logical readMaterialMap(char * filename, uint8_t* npdata){
+  if (filename == NULL && npdata != NULL){
+    return readMaterialMapNumpy(npdata);
+  } else {
+    // Check file format before reading
+    unsigned long int str_len = strlen(filename);
+    if (!strcmp(&filename[str_len-3],".nf"))
+      return readMaterialMapNF(filename);
+    if (!strcmp(&filename[str_len-4],".raw")){
+      return readMaterialMapRAW(filename);
+    }
   }
   printf("ERROR: file %s is not in a valid format.\n",filename);
   return HMG_FALSE;
@@ -1611,7 +1613,7 @@ logical readMaterialMapRAW(char * filename){
   return HMG_FALSE;
 }
 //------------------------------------------------------------------------------
-logical readMaterialMapNumpy(uint8_t* data){
+logical readMaterialMapNumpy(uint8_t* npdata){
   unsigned int i, j, k, ii, jj, kk;
   unsigned int rows = (hmgModel->m_ny-1) / hmgModel->m_mesh_refinement;
   unsigned int cols = (hmgModel->m_nx-1) / hmgModel->m_mesh_refinement;
@@ -1632,7 +1634,7 @@ logical readMaterialMapNumpy(uint8_t* data){
       for (kk = hmgModel->m_mesh_refinement*k; kk<(hmgModel->m_mesh_refinement*(k+1)*(hmgModel->m_nz>0)+(hmgModel->m_nz<1)); kk++){
         for (ii = hmgModel->m_mesh_refinement*i; ii<hmgModel->m_mesh_refinement*(i+1); ii++){
           for (jj = hmgModel->m_mesh_refinement*j; jj<hmgModel->m_mesh_refinement*(j+1); jj++){
-            hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[data[dataIndex++]];
+            hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[npdata[dataIndex++]];
           }
         }
       }
@@ -1645,7 +1647,7 @@ logical readMaterialMapNumpy(uint8_t* data){
         for (kk = hmgModel->m_mesh_refinement*k; kk<(hmgModel->m_mesh_refinement*(k+1)*(hmgModel->m_nz>0)+(hmgModel->m_nz<1)); kk++){
           for (ii = hmgModel->m_mesh_refinement*i; ii<hmgModel->m_mesh_refinement*(i+1); ii++){
             for (jj = hmgModel->m_mesh_refinement*j; jj<hmgModel->m_mesh_refinement*(j+1); jj++){
-              hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[data[dataIndex++]];
+              hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[npdata[dataIndex++]];
             }
           }
         }

@@ -32,17 +32,17 @@ class CustomBuildExt(build_ext):
         subprocess.check_call(linker_command, shell=True)
         super().build_extensions()
 
-sources  = glob.glob('chfem/**/*.c', recursive=True)
-sources += glob.glob('chfem/**/*.cu', recursive=True)
+sources  = glob.glob('pychfem/**/*.c', recursive=True)
+sources += glob.glob('pychfem/**/*.cu', recursive=True)
 sources = [src for src in sources if '__pycache__' not in src]
 
 setup(
-    name='chfem',
+    name='pychfem',
     version='1.0',
-    author="chfem team",
+    author="pychfem team",
     url="https://gitlab.com/cortezpedro/chfem_gpu",
     description='Python API for chfem',
     packages=find_packages(),
-    ext_modules=[Extension('chfem.wrapper', sources=sources)],
+    ext_modules=[Extension('pychfem.wrapper', sources=sources)],
     cmdclass={'build_ext': CustomBuildExt}
 )
