@@ -1,5 +1,4 @@
 import numpy as np
-import json
 
 def import_raw(filename, shape, dtype=np.uint8):
     """
