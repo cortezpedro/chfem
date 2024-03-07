@@ -1,18 +1,16 @@
 [![license](https://img.shields.io/badge/license-MIT-green.svg?style=flat)](https://gitlab.com/cortezpedro/chfemgpu/-/blob/master/LICENSE)
 
-# Computational Homogenization with the image-based Finite Element Method in GPU (chfem\_gpu)
+# Computational Homogenization with the image-based Finite Element Method in GPU (chfem)
 
 Developed at the _Laboratório de Computação Científica, Universidade Federal Fluminense_ (`LCC-UFF`). Niterói, Brazil.
 
-Currently at version v1.2
-
 Part of a toolkit for image-based numerical homogenization. The following programs are also recommended:
-+ [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer), a GUI-based tool for viewing $\mu$CT data depicted by stacks of TIFF files and generating `.nf` and `.raw` files that can serve as input for `chfem_gpu`.
++ [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer), a GUI-based tool for viewing $\mu$CT data depicted by stacks of TIFF files and generating `.nf` and `.raw` files that can serve as input for `chfem`.
 + [chpack](https://gitlab.com/lcc-uff/Chpack.jl), a bundle of Julia programs that employ similar matrix-free approaches in CPU, with script-like syntax.
 
 ## Introduction
 
-`chfem_gpu` is a software written in C and CUDA C for the computational homogenization of material samples characterized via $\mu$CT. As it is, the effective properties that can be evaluated are:
+`chfem` is a software written in C and CUDA C for the computational homogenization of material samples characterized via $\mu$CT. As it is, the effective properties that can be evaluated are:
 
 + Thermal conductivity $\rightarrow$ $\kappa\nabla^{2}u=0$
 + Linear elasticity $\rightarrow$ $\nabla\cdot\mathbf{C}\nabla\mathbf{u}=0$
@@ -20,7 +18,7 @@ Part of a toolkit for image-based numerical homogenization. The following progra
 
 The program follows a lightweight matrix-free approach to image-based finite element analysis, exploring GPU resources with CUDA to achieve significant performance gains.
 
-As input, `chfem_gpu` expects a neutral file (`.nf`) [like this](https://gitlab.com/cortezpedro/chfem_gpu/-/blob/master/test/input/2D/thermal/100x100.nf) that contains textual descriptive info regarding analysis parameters, and a RAW file (`.raw`) containing an 8bit (0-255) grayscale value for each voxel (a raster grayscale image).
+As input, `chfem` expects a neutral file (`.nf`) [like this](https://gitlab.com/cortezpedro/chfem/-/blob/master/test/input/2D/thermal/100x100.nf) that contains textual descriptive info regarding analysis parameters, and a RAW file (`.raw`) containing an 8bit (0-255) grayscale value for each voxel (a raster grayscale image).
 
 ### Motto
 
@@ -43,7 +41,7 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
 
 + Toolkit for image-based numerical homogenization (alongside [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer) and [chpack](https://gitlab.com/lcc-uff/Chpack.jl)).
 [link to paper](https://doi.org/10.1016/j.commatsci.2023.112021)
-**Obs.:** If you use `chfem_gpu` in your academic work, it is kindly requested that you cite this reference.
+**Obs.:** If you use `chfem` in your academic work, it is kindly requested that you cite this reference.
 ```Bibtex
 @article{toolkit2023,
     title = {Simulation toolkit for digital material characterization of large image-based microstructures},
@@ -69,6 +67,16 @@ Memory efficiency is the north of this project. Our end goal is to be able to ru
     publisher={Elsevier}
 }
 ```
+
+## Python API
+
+Install chfem using:
+
+```bash
+pip install git+https://github.com/cortezpedro/chfem.git
+```
+
+You can follow [this Colab tutorial](https://colab.research.google.com/github/cortezpedro/chfem/blob/dev/tutorial.ipynb) to get started.
 
 ## Input
 
@@ -164,7 +172,7 @@ A python script was implemented to handle compilation with `nvcc`. Any specific 
 
 ```bash
 ~[root]$ cd compile
-~[root]/compile$ python3 compile_chfem_gpu.py <options>
+~[root]/compile$ python3 compile_chfem.py <options>
 ```
 Some optional compiler flags:
 
@@ -214,13 +222,13 @@ Some optional compiler flags:
 + Linux
 
 ```bash
-~[root]$ ./chfem_gpu [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
+~[root]$ ./chfem [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
 ```
 
 + Windows (cmd)
 
 ```bash
-~[root]$ chfem_gpu.exe [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
+~[root]$ chfem.exe [NEUTRAL_FILE] [RAW_IMAGE_FILE] <options>
 ```
 
 Optional parameters:
@@ -252,4 +260,4 @@ Optional parameters:
 ~[root]/test$ ./test
 ```
 
-Obs.: \<options\> similar to `compile_chfem_gpu.py`'s \<options\>.
+Obs.: \<options\> similar to `compile_chfem.py`'s \<options\>.
