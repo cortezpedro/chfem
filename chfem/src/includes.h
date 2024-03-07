@@ -39,6 +39,8 @@ typedef struct _input{
 
   unsigned int xreduce_flag; //cudapcgFlag_t
 
+  var * eff_coeff;  // to return in python API
+
 } chfemgpuInput_t;
 
 void printHelp();

@@ -30,7 +30,7 @@
 #define FEMHMG_H_INCLUDED
 
 logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename, uint8_t* data);
-logical hmgEnd();
+logical hmgEnd(var **eff_coeff);
 
 void hmgSetXReduceFlag(cudapcgFlag_t flag);
 void hmgSetParallelStrategyFlag(cudapcgFlag_t flag);

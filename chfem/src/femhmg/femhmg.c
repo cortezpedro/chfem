@@ -379,7 +379,7 @@ logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename,
   return HMG_TRUE;
 }
 //------------------------------------------------------------------------------
-logical hmgEnd(){
+logical hmgEnd(var **eff_coeff){
   if (hmgModel == NULL) return HMG_FALSE;
 
   // Check if x0 matrix should be freed
@@ -392,6 +392,10 @@ logical hmgEnd(){
     }
     free(hmgModel->x0);
     hmgModel->x0 = NULL;
+  }
+
+  if (eff_coeff != NULL && hmgModel->C != NULL) {
+    *eff_coeff = hmgModel->C; // Save the address of C before freeing
   }
 
   // Free dynamic arrays from memory
@@ -408,7 +412,7 @@ logical hmgEnd(){
     free(hmgModel->density_map);      hmgModel->density_map = NULL;
   free(hmgModel->Mtxs);               hmgModel->Mtxs = NULL;
   free(hmgModel->CB);                 hmgModel->CB = NULL;
-  free(hmgModel->C);                  hmgModel->C = NULL;
+  hmgModel->C = NULL; // free(hmgModel->C); this deletes first element of eff_coeff
   
   if (hmgModel->thermal_expansion)
   free(hmgModel->thermal_expansion);  hmgModel->thermal_expansion = NULL;

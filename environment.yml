@@ -7,5 +7,6 @@ dependencies:
   - pip
   - cmake
   - numpy
+  - jupyter
   - pocl
   # - cudatoolkit-dev

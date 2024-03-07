@@ -160,4 +160,5 @@ test.py
 *.o
 *.nf
 *.raw
-chfem_gpu
+*.bin
+chfem_exec

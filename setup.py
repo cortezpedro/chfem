@@ -15,11 +15,12 @@ class CustomBuildExt(build_ext):
                 compile_command = f"nvcc -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
             elif source.endswith(".c") and 'wrapper' not in source:
                 compile_command = f"nvcc  -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
-            else:  # wrapper needs Python.h
+            else:  # wrapper needs Python.h and numpy/core
+                self.include_dirs.append(np.get_include())
                 compile_command = f"nvcc  -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}" + \
                     ' '.join([f" -I{include_dir}" for include_dir in self.include_dirs])
             
-            self.include_dirs.append(np.get_include())
+            print(compile_command)
             subprocess.check_call(compile_command, shell=True)
         ext.sources = []
         super().run()  # Continue with the regular build process
@@ -29,20 +30,21 @@ class CustomBuildExt(build_ext):
         lib_filename = os.path.join(self.build_lib, self.ext_map['wrapper']._file_name)
         Path(os.path.split(lib_filename)[0]).mkdir(parents=True, exist_ok=True)
         linker_command = f"nvcc -Xcompiler -fopenmp -shared -o {lib_filename} {' '.join(built_objects)}"
+        print(linker_command)
         subprocess.check_call(linker_command, shell=True)
         super().build_extensions()
 
-sources  = glob.glob('pychfem/**/*.c', recursive=True)
-sources += glob.glob('pychfem/**/*.cu', recursive=True)
+sources  = glob.glob('chfem/**/*.c', recursive=True)
+sources += glob.glob('chfem/**/*.cu', recursive=True)
 sources = [src for src in sources if '__pycache__' not in src]
 
 setup(
-    name='pychfem',
+    name='chfem',
     version='1.0',
-    author="pychfem team",
+    author="chfem team",
     url="https://gitlab.com/cortezpedro/chfem_gpu",
     description='Python API for chfem',
     packages=find_packages(),
-    ext_modules=[Extension('pychfem.wrapper', sources=sources)],
+    ext_modules=[Extension('chfem.wrapper', sources=sources)],
     cmdclass={'build_ext': CustomBuildExt}
 )

@@ -94,7 +94,16 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  return runAnalysis(user_input);
+  if (runAnalysis(user_input) != 0){
+    printf("Failed to run analysis.\nProcess aborted.\n");
+    printf("#######################################################\n");
+    free(user_input);
+    return -1;
+  }
+  
+  // Free input struct
+  free(user_input);
+  return 0;
 }
 
 int runAnalysis(chfemgpuInput_t * user_input){
@@ -111,7 +120,7 @@ int runAnalysis(chfemgpuInput_t * user_input){
   // Set pore mapping strategy flag (used in permeability analysis)
   if (!hmgSetPoreMappingStrategy(user_input->poremap_flag)){
     printf("ERROR: Failed to set \"poremap_flag\"=%d.\nProcess aborted.\n",user_input->poremap_flag);
-    hmgEnd();
+    hmgEnd(&(user_input->eff_coeff));
     free(user_input);
     return -1;
   }
@@ -160,10 +169,7 @@ int runAnalysis(chfemgpuInput_t * user_input){
     hmgSaveConstitutiveMtx(user_input->binary_file);
 
   // Finish femhmg API. (ATTENTION: Will free dynamic arrays from memory)
-  hmgEnd();
-
-  // Free input struct
-  free(user_input);
+  hmgEnd(&(user_input->eff_coeff));
 
   printf("#######################################################\n");
 
