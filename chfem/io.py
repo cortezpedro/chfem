@@ -149,8 +149,8 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
         :type array: np.array
         :param analysis_type: 0 = conductivity, 1 = elasticity, 2 = permeability
         :type analysis_type: int
-        :param mat_props: material properties for each phase, e.g. [(phase_id, cond),] or [(phase_id, young, poisson),], None for permeability
-        :type mat_props: list(tuple(uint8, float)) or list(tuple(uint8, float, float))
+        :param mat_props: material properties for each phase as a dictionary. For conductivity, use {phase_id: cond}. For elasticity, use {phase_id: (young, poisson)}. For permeability, use None.
+        :type mat_props: dict
         :param voxel_size: voxel size
         :type voxel_size: float
         :param solver_type:  0 = pcg (default), 1 = cg, 2 = minres
@@ -159,7 +159,7 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
         :type rhs_type: int
         :param export_raw: export .raw file from numpy array
         :type export_raw: bool
-        :param export_nf: export .nf file with simulations inputs for CHFEM_GPU
+        :param export_nf: export .nf file with simulations inputs for chfem
         :type export_nf: bool
         :param solver_tolerance: solver tolerance for simulation
         :type solver_tolerance: float
@@ -180,7 +180,7 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
 
     # Check if mat_props IDs match array's unique values
     if mat_props is not None:
-        mat_props_ids = set([mat_prop[0] for mat_prop in mat_props])
+        mat_props_ids = set(mat_props.keys())
         array_material_ids = set(materials.keys())
 
         if mat_props_ids != array_material_ids:
@@ -194,18 +194,17 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
             raise ValueError(' '.join(error_message))
 
     # Prepare material properties for export
+    properties_of_materials = []
     if analysis_type == 0:  # conductivity
-        if mat_props is not None:
-            properties_of_materials = [f"{mat_id} {cond}" for mat_id, cond in mat_props]
-        else:
-            raise ValueError("Material properties must be provided for conductivity.")
+        for mat_id, cond in mat_props.items():
+            properties_of_materials.append(f"{mat_id} {cond}")
     elif analysis_type == 1:  # elasticity
-        if mat_props is not None:
-            properties_of_materials = [f"{mat_id} {young} {poisson}" for mat_id, young, poisson in mat_props]
-        else:
-            raise ValueError("Material properties must be provided for elasticity.")
-    else:
+        for mat_id, (young, poisson) in mat_props.items():
+            properties_of_materials.append(f"{mat_id} {young} {poisson}")
+    elif analysis_type == 2:  # permeability
         properties_of_materials = [f"{mat_id}" for mat_id in materials.keys()]
+    else:
+        raise ValueError("Invalid analysis type.")
     
     volume_fractions = np.array(list(materials.values())) * 100. / np.prod(domain.shape)
     
