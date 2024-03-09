@@ -1,0 +1,13 @@
+name: sphinx_rtd
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - pip
+  - sphinx
+  - sphinx_rtd_theme
+  - myst-parser
+  - nbsphinx
+  - nbsphinx-link
+  - pandoc

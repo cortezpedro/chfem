@@ -1,8 +1,8 @@
 [![license](https://img.shields.io/badge/license-MIT-green.svg?style=flat)](https://gitlab.com/cortezpedro/chfemgpu/-/blob/master/LICENSE)
 
-# Computational Homogenization with the image-based Finite Element Method in GPU (chfem)
+# chfem
 
-Developed at the _Laboratório de Computação Científica, Universidade Federal Fluminense_ (`LCC-UFF`). Niterói, Brazil.
+Computational Homogenization with the image-based Finite Element Method in GPU (chfem), developed at the _Laboratório de Computação Científica, Universidade Federal Fluminense_ (`LCC-UFF`). Niterói, Brazil.
 
 Part of a toolkit for image-based numerical homogenization. The following programs are also recommended:
 + [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer), a GUI-based tool for viewing $\mu$CT data depicted by stacks of TIFF files and generating `.nf` and `.raw` files that can serve as input for `chfem`.
