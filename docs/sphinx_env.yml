@@ -11,3 +11,4 @@ dependencies:
   - nbsphinx
   - nbsphinx-link
   - pandoc
+  - ipython  # for colors in notebook

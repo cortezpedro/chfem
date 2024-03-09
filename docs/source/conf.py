@@ -56,5 +56,8 @@ html_theme = 'sphinx_rtd_theme'
 # html_logo = ""
 html_theme_options = {
     'logo_only': False,
-    'display_version': False,
+    'display_version': True,
 }
+
+# Tell sphinx what the pygments highlight language should be.
+highlight_language = 'python'
