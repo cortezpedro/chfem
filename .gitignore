@@ -162,3 +162,4 @@ test.py
 *.raw
 *.bin
 chfem_exec
+!chfem_example.png
