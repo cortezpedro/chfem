@@ -42,8 +42,8 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='m
     
     :Example:
     >>> import chfem
-    >>> array = np.zeros((100, 100, 100), dtype=np.uint8)
-    >>> array[30:70, 30:70, 30:70] = 255
+    >>> array = np.zeros((80, 90, 100), dtype=np.uint8)
+    >>> array[20:60, 30:70, 30:70] = 255
     >>> keff = chfem.compute_property('conductivity', array, mat_props={255: 1, 0: 0.1}, direction='x', output_fields="cubes")
     >>> Ceff = chfem.compute_property('elasticity', array, mat_props={255: (200, 0.2), 0: (100, 0.3)}, direction='x', output_fields="cubes") 
     >>> Keff = chfem.compute_property('permeability', array, direction='x', output_fields="cubes")

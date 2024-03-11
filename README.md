@@ -45,7 +45,7 @@ You need an NVIDIA GPU to run `chfem`, either locally or remotely (e.g. Colab, A
 [Anaconda](https://docs.anaconda.com/free/anaconda/install/index.html) installation and to work inside a conda environment:
 
 ```bash
-conda create --name chfem python
+conda create --name chfem -c conda-forge pip python numpy cmake
 conda activate chfem
 ```
 
@@ -57,7 +57,7 @@ conda install conda-forge::cudatoolkit-dev
 
 ### Python Package
 
-#### Installation
+#### Installation for Users
 
 You can now install the `chfem` python package using:
 
@@ -69,14 +69,27 @@ pip install git+https://github.com/cortezpedro/chfem.git
 
 You can follow [this Colab tutorial](https://colab.research.google.com/github/cortezpedro/chfem/blob/dev/tutorial.ipynb) to get started with `chfem`'s python API.
 
+#### Installation for Developers
+
+For users that plan to make changes to the source code or to use more advanced compiler flags, 
+`chfem` can be downloaded and installed using:
+
+```bash
+git clone https://github.com/cortezpedro/chfem.git
+cd chfem
+conda activate chfem
+pip install -e .
+```
+
+The -e flag stands for _editable_ and it is used to link the local source files to the installation environment. 
+
 ### Executable 
 
 #### Installation
 
-You can install and run the `chfem_exec` executable using:
+You can install and run the `chfem_exec` executable, after having git cloned the project, using:
 
 ```bash
-git clone https://github.com/cortezpedro/chfem.git
 cd chfem && mkdir -p build && cd build && cmake .. && make -j && cd ..
 ./chfem_exec -h
 ```

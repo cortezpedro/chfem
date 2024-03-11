@@ -8,5 +8,5 @@ dependencies:
   - cmake
   - numpy
   - jupyter
-  - pocl
+  - ocl-icd-system
   # - cudatoolkit-dev
