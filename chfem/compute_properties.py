@@ -99,6 +99,9 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='m
                      solver_maxiter=solver_maxiter, tmp_nf_file=tmp_nf_file)
     # print(tmp_nf_file.read().decode('utf-8'))
 
+    # convert array to contiguous C order
+    array = np.ascontiguousarray(array.transpose(2, 1, 0))
+
     print("Calling chfem wrapper")
     eff_coeff = run(array, tmp_nf_file.name, analysis_type, direction_int, precondition, output_fields_flag)
     tmp_nf_file.close(); os.remove(tmp_nf_file.name) # removing temporary .nf file
