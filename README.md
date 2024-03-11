@@ -15,6 +15,23 @@ The program follows a lightweight matrix-free approach to image-based finite ele
   <img src="https://github.com/cortezpedro/chfem/raw/dev/docs/source/chfem_example.png" width="100%"></img>
 </p>
 
+If you use `chfem` in your research, please use the following BibTeX entries to cite 
+[our paper](https://doi.org/10.1016/j.commatsci.2023.112021):
+
+```Bibtex
+@article{toolkit2023,
+    title = {Simulation toolkit for digital material characterization of large image-based microstructures},
+    author = {Pedro C.F. Lopes and Rafael S. Vianna and Victor W. Sapucaia and Federico Semeraro and Ricardo Leiderman and André M.B. Pereira},
+    journal = {Computational Materials Science},
+    volume = {219},
+    pages = {112021},
+    year = {2023},
+    publisher={Elsevier}
+}
+```
+Developed at the _Laboratório de Computação Científica, Universidade Federal Fluminense_ (`LCC-UFF`). Niterói, Brazil.
+
+
 ## How to get started
 
 There are two main ways to access the functionalities of `chfem`: through a python API or via an executable. We describe the installation of both next.
@@ -50,7 +67,7 @@ pip install git+https://github.com/cortezpedro/chfem.git
 
 ### Tutorial
 
-You can follow [this Colab tutorial](https://colab.research.google.com/github/cortezpedro/chfem/blob/dev/tutorial.ipynb) to get started `chfem`'s python API.
+You can follow [this Colab tutorial](https://colab.research.google.com/github/cortezpedro/chfem/blob/dev/tutorial.ipynb) to get started with `chfem`'s python API.
 
 ## Executable 
 
@@ -209,9 +226,9 @@ Obs.: The provided image's voxels must be numbered from <u>left to right</u>, th
 
 | Analysis | Voxels  | DOFs \[$\times 10^6$\]    | CPU RAM \[GB\] | GPU RAM \[GB\]           |
 |  :---:   | :---:   |        ---:               |     :---:      |     :---:                |
-| THERMAL  | 400$^3$ |       64                  |      1.5       | <32BIT> 1.1, <64BIT> 2.2 | 
-| ELASTIC  | 400$^3$ |      192                  |      4.0       | <32BIT> 3.2, <64BIT> 6.3 |
-|  FLUID   | 400$^3$ | $\approx 4\phi\times$ 64  |      1.3       | <32BIT> 1.3, <64BIT> 2.1 |
+| THERMAL  | $400^3$ |       64                  |      1.5       | <32BIT> 1.1, <64BIT> 2.2 | 
+| ELASTIC  | $400^3$ |      192                  |      4.0       | <32BIT> 3.2, <64BIT> 6.3 |
+|  FLUID   | $400^3$ | $\approx 4\phi\times$ 64  |      1.3       | <32BIT> 1.3, <64BIT> 2.1 |
 
 Obs.: These are memory **estimates**, for the sake of reference.
 
@@ -227,35 +244,13 @@ Obs.3: Lower memory requirements can be achieved with the 3 and 2 vector solvers
 + Linear shape functions for finite elements
 + Numerical stabilization for stokes flow
 
-## FAQ
+### Useful Resources
 
-Obs.: Note that `nvcc` might not work out-of-the-box in Windows. A common issue when running our "compiler script" in Windows is:
-```bash
-nvcc fatal : Cannot find compiler 'cl.exe' in PATH
-```
-To solve this, we suggest installing [Microsoft Visual Studio Community](https://visualstudio.microsoft.com/vs/community/) with its C/C++ dependencies, then either adding `cl.exe`'s directory to your `PATH` or passing it to the compiler with the `-ccbin` flag. Alternatively, you may compile and run in MSVC.
-
-## How to Cite
-
-If you use `chfem` in your research, please use the following BibTeX entries to cite it:
-
-+ Toolkit for image-based numerical homogenization (alongside [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer) and [chpack](https://gitlab.com/lcc-uff/Chpack.jl)).
-[link to paper](https://doi.org/10.1016/j.commatsci.2023.112021)
-**Obs.:** If you use `chfem` in your academic work, it is kindly requested that you cite this reference.
-```Bibtex
-@article{toolkit2023,
-    title = {Simulation toolkit for digital material characterization of large image-based microstructures},
-    author = {Pedro C.F. Lopes and Rafael S. Vianna and Victor W. Sapucaia and Federico Semeraro and Ricardo Leiderman and André M.B. Pereira},
-    journal = {Computational Materials Science},
-    volume = {219},
-    pages = {112021},
-    year = {2023},
-    publisher={Elsevier}
-}
-```
-
-+ Matrix-free PCG solver in GPU for image-based FEM problems in periodic media.
-[link to paper](https://doi.org/10.1016/j.cma.2022.115276)
+The following resources are also recommended to aid the analysis:
++ [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer), a GUI-based tool for viewing $\mu$-CT data depicted by stacks of TIFF files and generating `.nf` and `.raw` files that can serve as input for `chfem`.
++ [chpack](https://gitlab.com/lcc-uff/Chpack.jl), a bundle of Julia programs that employ similar matrix-free approaches in CPU, with script-like syntax.
++ Explanation of the matrix-free PCG solver in GPU for image-based FEM problems in periodic media
+([link to paper](https://doi.org/10.1016/j.cma.2022.115276)).
 ```Bibtex
 @article{lopes2022,
     title = {A GPU implementation of the PCG method for large-scale image-based finite element analysis in heterogeneous periodic media},
@@ -267,9 +262,10 @@ If you use `chfem` in your research, please use the following BibTeX entries to 
     publisher={Elsevier}
 }
 ```
+## FAQs
 
-Part of a toolkit for image-based numerical homogenization. The following programs are also recommended:
-+ [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer), a GUI-based tool for viewing $\mu$-CT data depicted by stacks of TIFF files and generating `.nf` and `.raw` files that can serve as input for `chfem`.
-+ [chpack](https://gitlab.com/lcc-uff/Chpack.jl), a bundle of Julia programs that employ similar matrix-free approaches in CPU, with script-like syntax.
-
-Developed at the _Laboratório de Computação Científica, Universidade Federal Fluminense_ (`LCC-UFF`). Niterói, Brazil.
+Obs.: Note that `nvcc` might not work out-of-the-box in Windows. A common issue when running our "compiler script" in Windows is:
+```bash
+nvcc fatal : Cannot find compiler 'cl.exe' in PATH
+```
+To solve this, we suggest installing [Microsoft Visual Studio Community](https://visualstudio.microsoft.com/vs/community/) with its C/C++ dependencies, then either adding `cl.exe`'s directory to your `PATH` or passing it to the compiler with the `-ccbin` flag. Alternatively, you may compile and run in MSVC.
