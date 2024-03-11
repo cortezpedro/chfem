@@ -55,9 +55,9 @@ If you have `nvcc` already installed in your system, you can skip to the next st
 conda install conda-forge::cudatoolkit-dev
 ```
 
-## Python Package
+### Python Package
 
-### Installation
+#### Installation
 
 You can now install the `chfem` python package using:
 
@@ -65,13 +65,13 @@ You can now install the `chfem` python package using:
 pip install git+https://github.com/cortezpedro/chfem.git
 ```
 
-### Tutorial
+#### Tutorial
 
 You can follow [this Colab tutorial](https://colab.research.google.com/github/cortezpedro/chfem/blob/dev/tutorial.ipynb) to get started with `chfem`'s python API.
 
-## Executable 
+### Executable 
 
-### Installation
+#### Installation
 
 You can install and run the `chfem_exec` executable using:
 
@@ -84,7 +84,7 @@ cd chfem && mkdir -p build && cd build && cmake .. && make -j && cd ..
 This will print the help information, confirming that the compilation was successfull. 
 Next we describe the details of the executable input/outputs, as well as command line arguments and optional compiler flags. 
 
-### Run
+#### Run
 
 You can run `chfem_exec` using:
 
@@ -113,12 +113,12 @@ Optional parameters:
 -xo: Export result vector (x) from the PCG solver.
 ```
 
-## Input
+#### Input
 
 As input, `chfem` expects a neutral file (`.nf`) [like this](https://github.com/cortezpedro/chfem/blob/dev/test/input/2D/thermal/100x100.nf) 
 that contains textual descriptive info regarding analysis parameters, and a RAW file (`.raw`) containing an 8bit (0-255) grayscale value for each voxel (a raster grayscale image).
 
-### Neutral file
+##### Neutral file
 
 A textual file that sets analyses parameters and provides information about the model. Template `.nf`'s can be generated with [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer). 
 The file must contain the following parameters (in this order):
@@ -171,13 +171,13 @@ float32
 [float32 or float64]
 ```
 
-### Raw file
+##### Raw file
 
 A binary representation of a raster image, with an 8-bit (uint8, 0-255) grayscale value per voxel. Each unique color value is taken as a material phase identifier in the given microstructure. In essence, the image is represented by an array, which can be generated from TIFF files with the [pyTomoviewer](https://github.com/LCC-UFF/pytomoviewer) application, or even it can be straightforwardly created with NumPy, for example.
 
 Obs.: The provided image's voxels must be numbered from <u>left to right</u>, then from <u>top to bottom</u>, then from <u>near to far</u>.
 
-## Optional compiler flags:
+#### Optional compiler flags:
 
 + Quiet iterations
 
@@ -222,7 +222,7 @@ Obs.: The provided image's voxels must be numbered from <u>left to right</u>, th
 
 ## Considerations
 
-## Memory
+### Memory
 
 | Analysis | Voxels  | DOFs \[$\times 10^6$\]    | CPU RAM \[GB\] | GPU RAM \[GB\]           |
 |  :---:   | :---:   |        ---:               |     :---:      |     :---:                |
