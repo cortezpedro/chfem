@@ -1607,12 +1607,14 @@ logical readMaterialMapNumpy(uint8_t* npdata){
   // column by column. First slice runs out of loop (2D).
   k=0;
   unsigned int dataIndex = 0;
+  uint8_t buffer;
   for (i = 0; i<rows; i++){
     for (j = 0; j<cols; j++){
+      buffer = npdata[dataIndex++];
       for (kk = hmgModel->m_mesh_refinement*k; kk<(hmgModel->m_mesh_refinement*(k+1)*(hmgModel->m_nz>0)+(hmgModel->m_nz<1)); kk++){
         for (ii = hmgModel->m_mesh_refinement*i; ii<hmgModel->m_mesh_refinement*(i+1); ii++){
           for (jj = hmgModel->m_mesh_refinement*j; jj<hmgModel->m_mesh_refinement*(j+1); jj++){
-            hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[npdata[dataIndex++]];
+            hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[buffer];
           }
         }
       }
@@ -1622,10 +1624,11 @@ logical readMaterialMapNumpy(uint8_t* npdata){
   for (k = 1; k<slices; k++){
     for (i = 0; i<rows; i++){
       for (j = 0; j<cols; j++){
+        buffer = npdata[dataIndex++];
         for (kk = hmgModel->m_mesh_refinement*k; kk<(hmgModel->m_mesh_refinement*(k+1)*(hmgModel->m_nz>0)+(hmgModel->m_nz<1)); kk++){
           for (ii = hmgModel->m_mesh_refinement*i; ii<hmgModel->m_mesh_refinement*(i+1); ii++){
             for (jj = hmgModel->m_mesh_refinement*j; jj<hmgModel->m_mesh_refinement*(j+1); jj++){
-              hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[npdata[dataIndex++]];
+              hmgModel->elem_material_map[ii+jj*rows_ref+kk*rows_ref*cols_ref] = (cudapcgMap_t) hmgModel->props_keys[buffer];
             }
           }
         }

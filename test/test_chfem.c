@@ -251,6 +251,8 @@ int main(void){
   int flag;
   
   for (int i=0; i<NUM_TESTS; i++){
+
+    printf("\n\nRunning Test: %s\n", NF_FILES[i]);
     
     INPUTS[i].neutral_file = &( NF_FILES[i][0]);
     INPUTS[i].raw_file     = &(RAW_FILES[i][0]);
