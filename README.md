@@ -1,5 +1,6 @@
 [![license](https://img.shields.io/badge/license-MIT-green.svg?style=flat)](https://gitlab.com/cortezpedro/chfemgpu/-/blob/master/LICENSE)
-[![Documentation Status](https://readthedocs.org/projects/chfem/badge/?version=latest)](https://chfem.readthedocs.io/en/latest/?badge=latest)
+[![documentation](https://readthedocs.org/projects/chfem/badge/?version=latest)](https://chfem.readthedocs.io/en/latest/?badge=latest)
+[![tutorial](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cortezpedro/chfem/blob/dev/tutorial.ipynb)
 
 # chfem
 
@@ -31,6 +32,8 @@ If you use `chfem` in your research, please use the following BibTeX entries to 
 ```
 Developed at the _Laboratório de Computação Científica, Universidade Federal Fluminense_ (`LCC-UFF`). Niterói, Brazil.
 
+There are two repositories for this project, a [development one on Gitlab](https://gitlab.com/cortezpedro/chfem_gpu) and a 
+[mirror of this repository on Github](https://github.com/cortezpedro/chfem), mostly used to host the stable release tags, the tutorial and documentation.
 
 ## How to get started
 

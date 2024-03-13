@@ -5,7 +5,7 @@ import tempfile
 import os
 
 def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='minres', solver_tolerance=1e-6, solver_maxiter=10000,
-                     precondition=True, type_of_rhs=0, refinement=1, direction='all', output_fields=None):
+                     precondition=True, type_of_rhs=0, refinement=1, direction='all', output_fields=None, nf_filepath=None):
     """Computes the effective property of a material using chfem.
 
     This function calculates the effective thermal conductivity, linear elasticity,
@@ -37,6 +37,8 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='m
     :type direction: str, optional
     :param output_fields: File path to output the fields (e.g., displacement, temperature), defaults to None.
     :type output_fields: str, optional
+    :param nf_filepath: Provide the path to a Neutral File (.nf) to specify the simulation settings.
+    :type nf_filepath: str, optional
     :return: The effective property coefficient.
     :rtype: float
     
@@ -55,54 +57,66 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='m
         raise ValueError(f"Invalid property: {property}")
     analysis_type = properties[property]
     
-    if mat_props is None and property != 'permeability':
-        raise ValueError("Material properties must be provided, e.g. [(phase_id, cond),] for conductivity or [(phase_id, young, poisson),] for elasticity.")
-    
-    solvers = {'cg3': 2, 'minres3': 3, 'cg2': 4, 'minres2': 5}
-    if solver not in ['cg', 'minres']:
-        raise ValueError(f"Invalid solver type: {solver}")
-    if output_fields:
-        solver_type = solvers[solver + '3']
-    else:
-        solver_type = solvers[solver + '2']
-        
     directions = {'x': 0, 'y': 1, 'z': 2, 'yz': 3, 'xz': 4, 'xy': 5, 'all': 6}
     if direction not in directions:
         raise ValueError(f"Invalid direction: {direction}")
     direction_int = directions[direction]
 
-    if array.dtype != np.uint8:
-        raise ValueError("Domain must be uint8 dtype.")
-    elif array.ndim != 3:
-        raise ValueError("Domain must be 3D.")
-    
-    unique_ids = np.unique(array)
-    if 0 not in unique_ids:
-        raise ValueError("No fluid phase found in the domain.")
+    output_fields_flag = 1 if output_fields is not None else 0
 
-    if output_fields is None:
-        output_fields_flag = 0
-        tmp_nf_file = tempfile.NamedTemporaryFile(delete=False)
-    else:
-        path, _ = os.path.split(output_fields)
-        if path == '' or os.path.exists(path):
-            output_fields_flag = 1
-            tmp_nf_file = open(output_fields + ".nf", 'wb')
+    if nf_filepath is not None:
+        if os.path.exists(nf_filepath):
+            nf_filename = nf_filepath
         else:
-            raise ValueError(f"Output fields directory {path} does not exist.")
-    
-    # Create temporary .nf file with properties
-    export_for_chfem(None, array, analysis_type=analysis_type, mat_props=mat_props,
-                     voxel_size=voxel_size, solver_type=solver_type, 
-                     rhs_type=type_of_rhs, refinement=refinement,
-                     export_raw=False, export_nf=True, solver_tolerance=solver_tolerance, 
-                     solver_maxiter=solver_maxiter, tmp_nf_file=tmp_nf_file)
-    # print(tmp_nf_file.read().decode('utf-8'))
+            raise ValueError(f"The file {nf_filepath} does not exist.")
+        
+    else:
+        if mat_props is None and property != 'permeability':
+            raise ValueError("Material properties must be provided, e.g. [(phase_id, cond),] for conductivity or [(phase_id, young, poisson),] for elasticity.")
+        
+        solvers = {'cg3': 2, 'minres3': 3, 'cg2': 4, 'minres2': 5}
+        if solver not in ['cg', 'minres']:
+            raise ValueError(f"Invalid solver type: {solver}")
+        if output_fields:
+            solver_type = solvers[solver + '3']
+        else:
+            solver_type = solvers[solver + '2']
+            
+        if array.dtype != np.uint8:
+            raise ValueError("Domain must be uint8 dtype.")
+        elif array.ndim != 3:
+            raise ValueError("Domain must be 3D.")
+        
+        unique_ids = np.unique(array)
+        if 0 not in unique_ids:
+            raise ValueError("No fluid phase found in the domain.")
+
+        if output_fields is None:
+            tmp_nf_file = tempfile.NamedTemporaryFile(delete=False)
+        else:
+            path, _ = os.path.split(output_fields)
+            if path == '' or os.path.exists(path):
+                tmp_nf_file = open(output_fields + ".nf", 'wb')
+            else:
+                raise ValueError(f"Output fields directory {path} does not exist.")
+        
+        # Create temporary .nf file with properties
+        export_for_chfem(None, array, analysis_type=analysis_type, mat_props=mat_props,
+                        voxel_size=voxel_size, solver_type=solver_type, 
+                        rhs_type=type_of_rhs, refinement=refinement,
+                        export_raw=False, export_nf=True, solver_tolerance=solver_tolerance, 
+                        solver_maxiter=solver_maxiter, tmp_nf_file=tmp_nf_file)
+        
+        # print(tmp_nf_file.read().decode('utf-8'))
+        nf_filename = tmp_nf_file.name
 
     # convert array to contiguous C order
     array = np.ascontiguousarray(array.transpose(2, 1, 0))
 
     print("Calling chfem wrapper")
-    eff_coeff = run(array, tmp_nf_file.name, analysis_type, direction_int, precondition, output_fields_flag)
-    tmp_nf_file.close(); os.remove(tmp_nf_file.name) # removing temporary .nf file
+    eff_coeff = run(array, nf_filename, analysis_type, direction_int, precondition, output_fields_flag)
+    
+    if nf_filepath is None:
+        tmp_nf_file.close(); os.remove(tmp_nf_file.name) # removing temporary .nf file
+    
     return eff_coeff

@@ -1,4 +1,4 @@
-#include "../src/includes.h"
+#include "../chfem/src/includes.h"
 #include <math.h>
 
 #define NUM_TESTS 14
@@ -19,68 +19,68 @@ double DIFF[NUM_TESTS];
 
 //------------------------------------------------------------------------------
 char NF_FILES[NUM_TESTS][1024] = {
-  "input/2D/thermal/100x100.nf",
-  "input/2D/thermal/100x100.nf",
-  "input/2D/thermal/100x100_bin.nf",
-  "input/2D/elastic/100x100.nf",
-  "input/2D/elastic/100x100.nf",
-  "input/2D/elastic/100x100_bin.nf",
-  "input/2D/fluid/100x100.nf",
-  "input/3D/thermal/ggg40_100.nf",
-  "input/3D/thermal/ggg40_100.nf",
-  "input/3D/thermal/ggg40_100_bin.nf",
-  "input/3D/elastic/ggg40_100.nf",
-  "input/3D/elastic/ggg40_100.nf",
-  "input/3D/elastic/ggg40_100_bin.nf",
-  "input/3D/fluid/fibers_100x100x10.nf"
+  "test/input/2D/thermal/100x100.nf",
+  "test/input/2D/thermal/100x100.nf",
+  "test/input/2D/thermal/100x100_bin.nf",
+  "test/input/2D/elastic/100x100.nf",
+  "test/input/2D/elastic/100x100.nf",
+  "test/input/2D/elastic/100x100_bin.nf",
+  "test/input/2D/fluid/100x100.nf",
+  "test/input/3D/thermal/ggg40_100.nf",
+  "test/input/3D/thermal/ggg40_100.nf",
+  "test/input/3D/thermal/ggg40_100_bin.nf",
+  "test/input/3D/elastic/ggg40_100.nf",
+  "test/input/3D/elastic/ggg40_100.nf",
+  "test/input/3D/elastic/ggg40_100_bin.nf",
+  "test/input/3D/fluid/fibers_100x100x10.nf"
 };
 char RAW_FILES[NUM_TESTS][1024] = {
-  "input/2D/100x100.raw",
-  "input/2D/100x100.raw",
-  "input/2D/100x100.raw",
-  "input/2D/100x100.raw",
-  "input/2D/100x100.raw",
-  "input/2D/100x100.raw",
-  "input/2D/100x100.raw",
-  "input/3D/ggg40_100.raw",
-  "input/3D/ggg40_100.raw",
-  "input/3D/ggg40_100.raw",
-  "input/3D/ggg40_100.raw",
-  "input/3D/ggg40_100.raw",
-  "input/3D/ggg40_100.raw",
-  "input/3D/fibers_100x100x10.raw"
+  "test/input/2D/100x100.raw",
+  "test/input/2D/100x100.raw",
+  "test/input/2D/100x100.raw",
+  "test/input/2D/100x100.raw",
+  "test/input/2D/100x100.raw",
+  "test/input/2D/100x100.raw",
+  "test/input/2D/100x100.raw",
+  "test/input/3D/ggg40_100.raw",
+  "test/input/3D/ggg40_100.raw",
+  "test/input/3D/ggg40_100.raw",
+  "test/input/3D/ggg40_100.raw",
+  "test/input/3D/ggg40_100.raw",
+  "test/input/3D/ggg40_100.raw",
+  "test/input/3D/fibers_100x100x10.raw"
 };
 char SDF_FILES[NUM_TESTS][1024] = {
   "",
   "",
-  "input/2D/100x100.bin",
+  "test/input/2D/100x100.bin",
   "",
   "",
-  "input/2D/100x100.bin",
+  "test/input/2D/100x100.bin",
   "",
   "",
   "",
-  "input/3D/ggg40_100_thermal.bin",
+  "test/input/3D/ggg40_100_thermal.bin",
   "",
   "",
-  "input/3D/ggg40_100_elastic.bin",
+  "test/input/3D/ggg40_100_elastic.bin",
   ""
 };
 char RES_FILES[NUM_TESTS][1024] = {
-  "input/2D/thermal/100x100_result.bin",
-  "input/2D/thermal/100x100_result.bin",
-  "input/2D/thermal/100x100_result.bin",
-  "input/2D/elastic/100x100_result.bin",
-  "input/2D/elastic/100x100_result.bin",
-  "input/2D/elastic/100x100_result.bin",
-  "input/2D/fluid/100x100_result.bin",
-  "input/3D/thermal/ggg40_100_result.bin",
-  "input/3D/thermal/ggg40_100_result.bin",
-  "input/3D/thermal/ggg40_100_result.bin",
-  "input/3D/elastic/ggg40_100_result.bin",
-  "input/3D/elastic/ggg40_100_result.bin",
-  "input/3D/elastic/ggg40_100_result.bin",
-  "input/3D/fluid/fibers_100x100x10_result.bin"
+  "test/input/2D/thermal/100x100_result.bin",
+  "test/input/2D/thermal/100x100_result.bin",
+  "test/input/2D/thermal/100x100_result.bin",
+  "test/input/2D/elastic/100x100_result.bin",
+  "test/input/2D/elastic/100x100_result.bin",
+  "test/input/2D/elastic/100x100_result.bin",
+  "test/input/2D/fluid/100x100_result.bin",
+  "test/input/3D/thermal/ggg40_100_result.bin",
+  "test/input/3D/thermal/ggg40_100_result.bin",
+  "test/input/3D/thermal/ggg40_100_result.bin",
+  "test/input/3D/elastic/ggg40_100_result.bin",
+  "test/input/3D/elastic/ggg40_100_result.bin",
+  "test/input/3D/elastic/ggg40_100_result.bin",
+  "test/input/3D/fluid/fibers_100x100x10_result.bin"
 };
 unsigned int RES_SIZES[NUM_TESTS] = {
   4,
@@ -290,7 +290,7 @@ int main(void){
 int runTest(input_t *input, result_t *res){
 
   // Initialize FEM model for homogenization
-  if (!hmgInit(input->neutral_file,input->raw_file,input->sdf_bin_file)){ res->max_diff=INFINITY; return 0; }
+  if (!hmgInit(input->neutral_file,input->raw_file,input->sdf_bin_file, NULL)){ res->max_diff=INFINITY; return 0; }
 
   // Set parallel strategy flag
   hmgSetParallelStrategyFlag(input->parallel_flag);
@@ -349,7 +349,7 @@ int runTest(input_t *input, result_t *res){
   res->max_diff /= fabs(max_c)>ZERO ? max_c : 1.0;
 
   // Finish femhmg API. (ATTENTION: Will free dynamic arrays from memory)
-  hmgEnd();
+  hmgEnd(NULL);
   
   return 1;
 }

@@ -1,29 +1,3 @@
-/*
-	=====================================================================
-  Universidade Federal Fluminense (UFF) - Niteroi, Brazil
-  Institute of Computing
-  Authors: Cortez Lopes, P., Vianna, R., Sapucaia, V., Pereira., A.
-  contact: pedrocortez@id.uff.br
-
-  Image-based Computational Homogenization with the FEM in GPU.
-             (C)           (H)                     (FEM)  (GPU)
-  [chfem_gpu]
-  
-  History:
-    * v0.0 (jul/2020) [ALL]    -> OpenMp, parallelization of CPU code
-    * v1.0 (nov/2020) [CORTEZ] -> CUDA, PCG in GPU
-    * v1.1 (sep/2022) [CORTEZ] -> Added permeability, MINRES.
-                                  atomicAdd for EBE.
-                                  refactoring of kernels for readability.
-
-  API for the handling of FEM models used in material homogenization.
-  Makes use of cudapcg.h to solve linear systems of equations.
-  
-  THERMAL CONDUCTIVITY, LINEAR ELASTICITY, ABSOLUTE PERMEABILITY.
-
-  =====================================================================
-*/
-
 #include "includes.h"
 
 #ifndef FEMHMG_H_INCLUDED

@@ -4,27 +4,6 @@
   Institute of Computing
   Authors: Cortez Lopes, P., Pereira., A.
   contact: pedrocortez@id.uff.br
-
-  [cudapcg]
-  
-  History:
-    * v1.0 (nov/2020) [CORTEZ] -> CUDA, PCG in GPU
-    * v1.1 (sep/2022) [CORTEZ] -> Added permeability, MINRES.
-                                  atomicAdd for EBE.
-                                  refactoring of kernels for readability.
-  
-  Pre-history:
-    Initially developed as a final work for the graduate course "Arquitetura
-    e Programacao de GPUs", at the Institute of Computing, UFF.
-
-  API for solving linear systems associated to FEM models with an matrix-free
-  solvers, using CUDA. All global matrix operations involve "assembly on-the-fly"
-
-  THERMAL CONDUCTIVITY, LINEAR ELASTICITY, ABSOLUTE PERMEABILITY.
-  
-  The NBN and EBE kernels are implemented here. These should be invoked
-  via the wrapper host functions in "cudapcg_kernels_wrappers.cu".
-
   =====================================================================
 */
 

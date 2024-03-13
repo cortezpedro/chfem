@@ -2,12 +2,12 @@
   =====================================================================
   Universidade Federal Fluminense (UFF) - Niteroi, Brazil
   Institute of Computing
-  Authors: Cortez Lopes, P., Vianna, R., Sapucaia, V., Pereira., A.
+  Authors: Cortez Lopes, P., Vianna, R., Sapucaia, V., Pereira., A., Semeraro, F.
   contact: pedrocortez@id.uff.br
 
   Image-based Computational Homogenization with the FEM in GPU.
-             (C)           (H)                     (FEM)  (GPU)
-  [chfem_gpu]
+             (C)           (H)                     (FEM)
+  [chfem]
   
   History:
     * v0.0 (jul/2020) [ALL]    -> OpenMp, parallelization of CPU code
@@ -21,46 +21,9 @@
   as input.
   
   REQUIRES NVIDIA GRAPHICS CARDS AND DRIVERS.
-  
   Developed in Debian-based Linux distros, for Linux.
-  Has been tested (and ran fine) in the following OS:
-    - Mint 19.3
-    - Mint 20.3
-    - Ubuntu 20.04
-    - CentOS
-    - Windows 10
-  
-  =====================================================================
-  To compile:
-  
-    ~[root]$ cd compile
-    ~[root]/compile$ python3 compile_chfem_gpu.py <options>
-    ~[root]/compile$ cd ..
-    ~[root]$ ls
-    _________
-    chfem_gpu compile src test 
-    *********
-        ^
-   (executable)
-  =====================================================================
-  To run:
-  
-    ~[root]$ ./chfem_gpu [NF_FILE] [RAW_FILE] <options>
-    
-  =====================================================================
-  To run tests:
-  
-    ~[root]$ cd test
-    ~[root]/test$ python3 compile_test.py <options>
-    ~[root]/test$ ./test
-    
-  =====================================================================
-  OBS.1: FOR FURTHER INFO IN REGARDS TO <options> IN ALL OF THE CASES
-         LISTED ABOVE, USE THE "-h" FLAG.
-        
-  OBS.2: AUXILIARY PYTHON SCRIPTS "compile_*.py" INVOKE nvcc TO GENERATE
-         EXECUTABLE BINARIES. "python3" MAY BE REPLACED BY WHATEVER NAME
-         OF YOUR ENVIROMENT VARIABLE FOR Python3.0+.
+
+  Refer to the README file for more information about how to compile and run.
 */
 
 #include "includes.h"
@@ -68,7 +31,7 @@
 //------------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
-    
+
   // Initialize input struct
   chfemgpuInput_t * user_input = (chfemgpuInput_t *) malloc(sizeof(chfemgpuInput_t));
   initDefaultInput(user_input);
@@ -180,7 +143,7 @@ int runAnalysis(chfemgpuInput_t * user_input){
 void printHelp(){
   printf("\nComputational Homogenization with the image-based FEM in GPU - v1.2 - (2020-2023) - LCC UFF\n\n");
 
-  printf("./chfem_gpu [.nf] [.raw] ... (options)\n\nor\n\n./chfem_gpu (options) ... -i [.nf] [.raw] ... (options)\n\n");
+  printf("./chfem_exec [.nf] [.raw] ... (options)\n\nor\n\n./chfem_exec (options) ... -i [.nf] [.raw] ... (options)\n\n");
   printf("\t-b: Save results in a binary file. Must be followed by a string with a filename.\n");
   printf("\t-c: Stopping criteria for the PCG method: 0 - L2 (default), 1 - Inf, 2 - L2+Error.\n");
   printf("\t-d: Target direction: 0 - X, 1 - Y, 2 - Z, 3 - YZ, 4 - XZ, 5 - XY, 6 - ALL (default).\n");

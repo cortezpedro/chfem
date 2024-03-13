@@ -11,13 +11,13 @@ class CustomBuildExt(build_ext):
         ext = self.extensions[0]
         for source in ext.sources:
             if source.endswith(".cu"):
-                compile_command = f"nvcc -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
+                compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
             elif source.endswith(".c") and 'wrapper' not in source:
-                compile_command = f"nvcc  -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
+                compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
             else:  # wrapper needs Python.h and numpy/core
                 import numpy as np
                 self.include_dirs.append(np.get_include())
-                compile_command = f"nvcc  -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}" + \
+                compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}" + \
                     ' '.join([f" -I{include_dir}" for include_dir in self.include_dirs])
             
             print(compile_command)
