@@ -4,7 +4,7 @@
 
 # chfem
 
-`chfem`, which stands for _Computational Homogenization with the image-based Finite Element Method_, is a software written in C and CUDA C, wrapped in Python, for the computational homogenization of material samples characterized via $\mu$-CT. As it is, the effective properties that can be evaluated are:
+`chfem`, which stands for _Computational Homogenization with the image-based Finite Element Method_, is a software written in C and CUDA, wrapped in Python, for the computational homogenization of material samples characterized via $\mu$-CT. As it is, the effective properties that can be evaluated are:
 
 + Thermal conductivity $\rightarrow$ $\kappa\nabla^{2}u=0$
 + Linear elasticity $\rightarrow$ $\nabla\cdot\mathbf{C}\nabla\mathbf{u}=0$
