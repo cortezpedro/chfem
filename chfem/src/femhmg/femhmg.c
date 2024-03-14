@@ -1347,7 +1347,7 @@ logical readData(char * filename){
   file = fopen( filename , "r");
   if (!file) return HMG_FALSE;
   var tol_buffer;
-  unsigned int count=0, num_of_info=11;
+  unsigned int count=0, num_of_info=12;
   logical was_xreduce_stabfactor_set = HMG_FALSE;
   printf("\r    Scanning through neutral file...[%3d%%]",(count*100)/num_of_info);
   while (fscanf(file, "%s", str)!=EOF && count<num_of_info){
@@ -1362,8 +1362,12 @@ logical readData(char * filename){
         return HMG_FALSE;
       }
 
-    //} else if (!strcmp(str,"%type_of_solver")){
-
+    } else if (!strcmp(str,"%type_of_solver")){
+      // using mat_id as auxiliary variable to read from file. unsigned 8bit
+      if(fscanf(file, "%hhu", &mat_id)==EOF){ printf("WARNING: Reached unexpected EOF when parsing %s\n",filename); break; }
+      hmgSetSolverFlag(mat_id);
+      printf("\r    Scanning through neutral file...[%3d%%]",((++count)*100)/num_of_info);
+      
     //} else if (!strcmp(str,"%type_of_rhs")){
 
     } else if (!strcmp(str,"%voxel_size")){
