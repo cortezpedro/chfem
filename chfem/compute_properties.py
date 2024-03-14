@@ -64,6 +64,13 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='m
 
     output_fields_flag = 1 if output_fields is not None else 0
 
+    solvers = {'cg': 0, 'minres': 1, 'cg3': 2, 'minres3': 3, 'cg2': 4, 'minres2': 5}
+    if solver not in ['cg', 'minres','cg3', 'minres3','cg2', 'minres2']:
+        raise ValueError(f"Invalid solver type: {solver}")
+    if solver in ['cg2','minres2'] and ( output_fields_flag or analysis_type<2):
+        raise ValueError(f"Invalid solver type: {solver}. Two-vectors solvers do not produce fields to be exported, nor are implemented for conductivy or elasticity analyses.")
+    solver_type = solvers[solver]
+
     if nf_filepath is not None:
         if os.path.exists(nf_filepath):
             nf_filename = nf_filepath
@@ -73,14 +80,6 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='m
     else:
         if mat_props is None and property != 'permeability':
             raise ValueError("Material properties must be provided, e.g. [(phase_id, cond),] for conductivity or [(phase_id, young, poisson),] for elasticity.")
-        
-        solvers = {'cg3': 2, 'minres3': 3, 'cg2': 4, 'minres2': 5}
-        if solver not in ['cg', 'minres']:
-            raise ValueError(f"Invalid solver type: {solver}")
-        if output_fields:
-            solver_type = solvers[solver + '3']
-        else:
-            solver_type = solvers[solver + '2']
             
         if array.dtype != np.uint8:
             raise ValueError("Domain must be uint8 dtype.")
@@ -114,7 +113,7 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='m
     array = np.ascontiguousarray(array.transpose(2, 1, 0))
 
     print("Calling chfem wrapper")
-    eff_coeff = run(array, nf_filename, analysis_type, direction_int, precondition, output_fields_flag)
+    eff_coeff = run(array, nf_filename, analysis_type, direction_int, solver_type, precondition, output_fields_flag)
     
     if nf_filepath is None:
         tmp_nf_file.close(); os.remove(tmp_nf_file.name) # removing temporary .nf file
