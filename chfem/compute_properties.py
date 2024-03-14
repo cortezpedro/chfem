@@ -4,7 +4,7 @@ import numpy as np
 import tempfile
 import os
 
-def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='minres', solver_tolerance=1e-6, solver_maxiter=10000,
+def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=None, solver_tolerance=1e-6, solver_maxiter=10000,
                      precondition=True, type_of_rhs=0, refinement=1, direction='all', output_fields=None, nf_filepath=None):
     """Computes the effective property of a material using chfem.
 
@@ -64,10 +64,12 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver='m
 
     output_fields_flag = 1 if output_fields is not None else 0
 
+    if solver is None:
+        solver = 'minres' if property == 'permeability' else 'cg'
     solvers = {'cg': 0, 'minres': 1, 'cg3': 2, 'minres3': 3, 'cg2': 4, 'minres2': 5}
-    if solver not in ['cg', 'minres','cg3', 'minres3','cg2', 'minres2']:
+    if solver not in solvers:
         raise ValueError(f"Invalid solver type: {solver}")
-    if solver in ['cg2','minres2'] and ( output_fields_flag or analysis_type<2):
+    if solver in ['cg2','minres2'] and ( output_fields_flag or not property == 'permeability'):
         raise ValueError(f"Invalid solver type: {solver}. Two-vectors solvers do not produce fields to be exported, nor are implemented for conductivy or elasticity analyses.")
     solver_type = solvers[solver]
 

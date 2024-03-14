@@ -17,9 +17,9 @@ def test_elasticity():
     coeff_ref = np.fromfile("test/input/3D/elastic/ggg40_100_result.bin", dtype=np.double, count=36).reshape(6, 6)
     np.testing.assert_almost_equal(coeff, coeff_ref, decimal=3)
 
-# def test_permeability():
-#     array = chfem.import_raw("test/input/3D/fibers_100x100x10.raw", (10, 100, 100))
-#     # array = array.transpose(2, 1, 0)
-#     coeff = chfem.compute_property('permeability', array, direction='z', nf_filepath="test/input/3D/fluid/fibers_100x100x10.nf")
-#     coeff_ref = np.fromfile("test/input/3D/fluid/fibers_100x100x10_result.bin", dtype=np.double, count=36).reshape(3, 3)
-#     np.testing.assert_almost_equal(coeff, coeff_ref, decimal=12)
+ def test_permeability():
+    array = chfem.import_raw("test/input/3D/fibers_100x100x10.raw", (10, 100, 100))
+    array = array.transpose(2, 1, 0)
+    coeff = chfem.compute_property('permeability', array, direction='z', nf_filepath="test/input/3D/fluid/fibers_100x100x10.nf")
+    coeff_ref = np.fromfile("test/input/3D/fluid/fibers_100x100x10_result.bin", dtype=np.double, count=36).reshape(3, 3)
+    np.testing.assert_almost_equal(coeff, coeff_ref, decimal=14)
