@@ -16,6 +16,7 @@ logical initModel_thermal_3D(hmgModel_t *model){
 	model->m_nelemdof = 8;
 	model->m_nnode = model->m_nx * model->m_ny * model->m_nz;
 	model->m_nelem = (model->m_nx-1) * (model->m_ny-1) * (model->m_nz-1);
+	model->m_nporeelem = model->m_nelem; // pore elems comprehend the pore space, the domain. as mesh is monolithic, porelem=elem.
 	model->m_ndof = model->m_nelem;
 
 	if (model->sdfFile==NULL){

@@ -118,6 +118,7 @@ typedef struct _hmgmodel{
     unsigned int m_ndof;
     unsigned int m_nVelocityNodes; // used for permeability analysis
     unsigned int m_nBorderNodes;
+    unsigned int m_nporeelem;
     
     unsigned char m_nmat; // keys are 8bit
 

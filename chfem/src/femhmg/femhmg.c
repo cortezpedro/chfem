@@ -15,7 +15,7 @@
 
 hmgModel_t * hmgModel = NULL;
 
-char report_buffer[1024]; // 1 KB (should always be enough)
+char report_buffer[2048]; // 2 KB (should always be enough)
 
 double time_total;
 
@@ -82,6 +82,46 @@ cudapcgFlag_t cudapcgModel_constructor(cudapcgModel_t **ptr, const void *data){
   (*ptr)->nhmgvars = model->m_analysis_flag == HMG_FLUID ? model->m_nVelocityNodes*model->m_dim_flag : model->m_ndof;
 
   return CUDAPCG_TRUE;
+}
+//------------------------------------------------------------------------------
+void estimate_memory(hmgModel_t *model, size_t *mem_maps, size_t *mem_solver){
+  if (model==NULL || mem_maps==NULL || mem_solver==NULL) return;
+  
+  *mem_maps=0;
+  *mem_solver=0;
+  
+  // map requirements
+  if (model->m_analysis_flag == HMG_THERMAL || model->m_analysis_flag == HMG_ELASTIC){
+   if (model->sdfFile==NULL) *mem_maps += model->m_nelem*sizeof(cudapcgMap_t);
+   else                      *mem_maps += model->m_nelem*sizeof(parametricScalarField_t);
+  } else if (model->m_analysis_flag == HMG_FLUID) {
+    *mem_maps += model->m_nelem*sizeof(cudapcgIdMap_t); // image-to-mesh map
+    if (model->poremap_flag == CUDAPCG_POREMAP_NUM){
+      *mem_maps += (model->m_nVelocityNodes+model->m_nBorderNodes)*sizeof(cudapcgIdMap_t); // mesh-to-image map
+      *mem_maps += model->m_nBorderNodes*sizeof(uint8_t); // borderkeys
+    } else *mem_maps += model->m_nelem*sizeof(cudapcgFlag_t);
+  } else return; // invalid analysis flag
+  
+  // solver requirements: vectors
+  unsigned int n_vectors;
+  if      (solver_flag == CUDAPCG_CG_SOLVER)      n_vectors=4;
+  else if (solver_flag == CUDAPCG_MINRES_SOLVER)  n_vectors=5;
+  else if (solver_flag <= CUDAPCG_MINRES3_SOLVER) n_vectors=3;
+  else if (solver_flag <= CUDAPCG_MINRES2_SOLVER) n_vectors=2;
+  else return; // invalid solver_flag
+  *mem_solver = n_vectors*model->m_ndof*sizeof(cudapcgVar_t);
+  
+  // check if xreduce has to be considered
+  if (model->m_analysis_flag == HMG_FLUID && solver_flag >= CUDAPCG_CG2_SOLVER && xreduce_flag != CUDAPCG_XREDUCE_NONE){
+    *mem_solver += (xreduce_flag == CUDAPCG_XREDUCE_FULL ? model->m_dim_flag : 1)
+                    * model->m_nVelocityNodes*sizeof(cudapcgVar_t);
+  }
+  
+  // auxiliary reduce vector (admitting 128 threads per block)
+  // 1% extra to account for second vector (approximation)
+  *mem_solver += (size_t)(1.01*((double)(CEIL(model->m_ndof,128)*sizeof(cudapcgVar_t))));
+  
+  return;
 }
 //------------------------------------------------------------------------------
 
@@ -1186,6 +1226,24 @@ void hmgPrintModelData(){
   const char str_solver[6][8] = { {"CG"},{"MINRES"},{"CG3"},{"MINRES3"},{"CG2"},{"MINRES2"} };
   char xreduce_str_buffer[32];
   sprintf(xreduce_str_buffer,"xreduce stab factor: %.2e\n",xreduce_scale_factor);
+  char porosity_str_buffer[128];
+  if (hmgModel->m_analysis_flag == HMG_FLUID){
+    sprintf(
+      porosity_str_buffer,
+      "  | porosity: %05.2f%%\n",
+      100.0*(((double) hmgModel->m_nporeelem) / hmgModel->m_nelem)
+    );
+  }
+  char fluidnodes_str_buffer[256];
+  if (hmgModel->m_analysis_flag == HMG_FLUID){
+    sprintf(
+      fluidnodes_str_buffer,
+      "  | within pores: %u\n"\
+      "  | at interfaces: %u\n",
+      hmgModel->m_nVelocityNodes,
+      hmgModel->m_nBorderNodes
+    );
+  }
 
   sprintf(
     report_buffer,
@@ -1193,20 +1251,60 @@ void hmgPrintModelData(){
     "MODEL DATA:\n"\
     "Analysis: %s\n"\
     "Homogenization on direction: %s\n"\
-    "Number of elements (x,y,z): [%d,%d,%d]\n"\
-    "Number of elements (total): %d\n"\
-    "Number of nodes: %d\n"\
-    "Number of DOFs: %d\n"\
-    "Number of materials: %d\n"\
-    "Numerical tolerance: %e\n"\
-    "Max iterations: %d\n"\
+    "Number of voxels (x,y,z): [%u,%u,%u]\n"\
+    "Number of voxels (total): %u\n"\
+    "Number of vertices: %u\n"\
+    "Number of elements: %u\n"\
+    "%s"\
+    "Number of nodes: %u\n"\
+    "%s"\
+    "Number of DOFs: %u\n"\
+    "Number of materials: %u\n"\
+    "Numerical tolerance: %.3e\n"\
+    "Max iterations: %u\n"\
     "Solver: %s%s\n"\
     "%s"\
     "*******************************************************\n",
-    str_sim,str_hmg[hmgModel->m_hmg_flag],hmgModel->m_nx-1,hmgModel->m_ny-1,hmgModel->m_nz-(hmgModel->m_nz>0),
-    hmgModel->m_nelem,hmgModel->m_nnode,hmgModel->m_ndof,hmgModel->m_nmat,hmgModel->m_num_tol,hmgModel->m_max_iterations,
+    str_sim,
+    str_hmg[hmgModel->m_hmg_flag],
+    hmgModel->m_nx-1,hmgModel->m_ny-1,hmgModel->m_nz-(hmgModel->m_nz>0),
+    hmgModel->m_nelem, // number of voxels   (at this point, m_nelem assumes the mesh is monolithic)
+    hmgModel->m_nnode, // number of vertices (at this point, m_nnode assumes the mesh is monolithic)
+    hmgModel->m_analysis_flag != HMG_FLUID ? hmgModel->m_nelem : hmgModel->m_nporeelem,
+    hmgModel->m_analysis_flag != HMG_FLUID ? "" : porosity_str_buffer,
+    hmgModel->m_analysis_flag != HMG_FLUID ? (hmgModel->m_ndof / hmgModel->m_nnodedof) : (hmgModel->m_nVelocityNodes+hmgModel->m_nBorderNodes),
+    hmgModel->m_analysis_flag != HMG_FLUID ? "" : fluidnodes_str_buffer,
+    hmgModel->m_ndof,
+    hmgModel->m_nmat,
+    hmgModel->m_num_tol,
+    hmgModel->m_max_iterations,
     preconditioner_flag ? "P" : "", str_solver[solver_flag],
     solver_flag < CUDAPCG_CG2_SOLVER ? "" : xreduce_str_buffer 
+  );
+
+  if (hmgModel->m_report_flag)
+    reportAppend(hmgModel->report, report_buffer);
+  printf("%s",report_buffer);
+  
+  size_t size_of_maps_MB=0, size_of_solver_MB=0;
+  estimate_memory(hmgModel,&size_of_maps_MB,&size_of_solver_MB);
+  
+  size_of_maps_MB   /= 1000000;
+  size_of_solver_MB /= 1000000;
+  
+  // memory estimates
+  sprintf(
+    report_buffer,
+    "GPU MEMORY REQUIREMENTS:\n"\
+    "  + %zuMB [maps]\n"\
+    "  + %zuMB [solver]\n"\
+    "  + ~100MB [O(1) overhead]\n"\
+    "--------------------------\n"\
+    "  %.3lfGB\n"\
+    "*******************************************************\n",
+    size_of_maps_MB,
+    size_of_solver_MB,
+    ((double) (size_of_maps_MB+size_of_solver_MB+100))*0.001
   );
 
   if (hmgModel->m_report_flag)

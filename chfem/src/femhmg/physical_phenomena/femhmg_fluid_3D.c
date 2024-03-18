@@ -21,7 +21,9 @@ logical initModel_fluid_3D(hmgModel_t *model){
 	model->m_nelemdof = 32;
 	model->m_nnode = model->m_nx * model->m_ny * model->m_nz;
 	model->m_nelem = (model->m_nx-1) * (model->m_ny-1) * (model->m_nz-1);
-	model->m_ndof = model->m_nelem*model->m_nnodedof; // needs to be updated
+	model->m_nporeelem = model->m_nelem; // needs to be updated afterwards (by calling poremapping functions)
+	model->m_ndof = model->m_nelem*model->m_nnodedof; // needs to be updated afterwards (by calling poremapping functions)
+	
 
 	model->assembleLocalMtxs = assembleLocalMtxs_fluid_3D;
 	model->assembleRHS = assembleRHS_fluid_3D;
@@ -363,7 +365,7 @@ void saveFields_fluid_3D(hmgModel_t *model, cudapcgVar_t * V){
 //---------------------------------
 
 //------------------------------------------------------------------------------
-void assembleDofIdMap_fluid_3D(hmgModel_t *model){
+void assembleDofIdMap_fluid_3D(hmgModel_t *model){	
   unsigned int dof_count = 0;
   // Start by setting dof ids to nodes within fluid
 	for (unsigned int i=0; i<model->m_nelem; i++){ // not really going through elems, but through nodes with diff dofs
@@ -420,6 +422,11 @@ void assembleDofIdMap_fluid_3D(hmgModel_t *model){
 }
 //------------------------------------------------------------------------------
 void assembleDofMaterialMap_fluid_3D(hmgModel_t *model){
+  // count porosity
+  unsigned int pore_count = 0;
+	for (unsigned int i=0; i<model->m_nelem; i++) if (model->elem_material_map[i]==0) pore_count++;
+	model->m_nporeelem = pore_count;
+	
   #pragma omp parallel for
 	for (unsigned int i=0; i<model->m_nelem; i++) // not really going through elems, but through nodes with diff dofs
 		model->dof_fluid_map[i] = 0;
