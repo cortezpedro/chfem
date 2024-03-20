@@ -12,14 +12,16 @@ class CustomBuildExt(build_ext):
         for source in ext.sources:
             if source.endswith(".cu"):
                 compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
-            elif source.endswith(".c") and 'wrapper' not in source:
-                compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
-            else:  # wrapper needs Python.h and numpy/core
-                import numpy as np
-                self.include_dirs.append(np.get_include())
-                compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}" + \
-                    ' '.join([f" -I{include_dir}" for include_dir in self.include_dirs])
-            
+            elif source.endswith(".c"):
+                if 'wrapper' not in source:
+                    compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
+                else:  # wrapper needs Python.h and numpy/core
+                    import numpy as np
+                    self.include_dirs.append(np.get_include())
+                    compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}" + \
+                        ' '.join([f" -I{include_dir}" for include_dir in self.include_dirs])
+            else:  # skip other files
+                continue
             print(compile_command)
             subprocess.check_call(compile_command, shell=True)
         ext.sources = []
