@@ -97,7 +97,7 @@ void estimate_memory(hmgModel_t *model, size_t *mem_maps, size_t *mem_solver){
   } else if (model->m_analysis_flag == HMG_FLUID) {
     *mem_maps += model->m_nelem*sizeof(cudapcgIdMap_t); // image-to-mesh map
     if (model->poremap_flag == CUDAPCG_POREMAP_NUM){
-      *mem_maps += (model->m_nVelocityNodes+model->m_nBorderNodes)*sizeof(cudapcgIdMap_t); // mesh-to-image map
+      *mem_maps += ((size_t) model->m_nVelocityNodes+model->m_nBorderNodes)*sizeof(cudapcgIdMap_t); // mesh-to-image map
       *mem_maps += model->m_nBorderNodes*sizeof(uint8_t); // borderkeys
     } else *mem_maps += model->m_nelem*sizeof(cudapcgFlag_t);
   } else return; // invalid analysis flag
@@ -109,12 +109,12 @@ void estimate_memory(hmgModel_t *model, size_t *mem_maps, size_t *mem_solver){
   else if (solver_flag <= CUDAPCG_MINRES3_SOLVER) n_vectors=3;
   else if (solver_flag <= CUDAPCG_MINRES2_SOLVER) n_vectors=2;
   else return; // invalid solver_flag
-  *mem_solver = n_vectors*model->m_ndof*sizeof(cudapcgVar_t);
+  *mem_solver = ((size_t) model->m_ndof)*n_vectors*sizeof(cudapcgVar_t);
   
   // check if xreduce has to be considered
   if (model->m_analysis_flag == HMG_FLUID && solver_flag >= CUDAPCG_CG2_SOLVER && xreduce_flag != CUDAPCG_XREDUCE_NONE){
     *mem_solver += (xreduce_flag == CUDAPCG_XREDUCE_FULL ? model->m_dim_flag : 1)
-                    * model->m_nVelocityNodes*sizeof(cudapcgVar_t);
+                    * ((size_t) model->m_nVelocityNodes) * sizeof(cudapcgVar_t);
   }
   
   // auxiliary reduce vector (admitting 128 threads per block)
