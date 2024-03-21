@@ -28,7 +28,7 @@ class CustomBuildExt(build_ext):
         super().run()  # Continue with the regular build process
     
     def build_extensions(self):
-        built_objects = glob.glob(os.path.join(self.build_temp, "*.o"))
+        built_objects = glob.glob(os.path.join(self.build_temp, "*.o*"))
         lib_filename = os.path.join(self.build_lib, self.ext_map['wrapper']._file_name)
         Path(os.path.split(lib_filename)[0]).mkdir(parents=True, exist_ok=True)
         linker_command = f"nvcc -Xcompiler -fopenmp -shared -o {lib_filename} {' '.join(built_objects)}"
