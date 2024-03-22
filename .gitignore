@@ -156,3 +156,6 @@ test.py
 chfem_exec
 chfem_test
 !chfem_example.png
+*.sh
+*.pbs
+*.txt

@@ -1,6 +1,8 @@
 [![license](https://img.shields.io/badge/license-MIT-green.svg?style=flat)](https://gitlab.com/cortezpedro/chfemgpu/-/blob/master/LICENSE)
 [![documentation](https://readthedocs.org/projects/chfem/badge/?version=latest)](https://chfem.readthedocs.io/en/latest/?badge=latest)
 [![tutorial](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cortezpedro/chfem/blob/dev/tutorial.ipynb)
+[![Anaconda-Server Badge](https://anaconda.org/conda-forge/chfem/badges/version.svg)](https://anaconda.org/conda-forge/chfem)
+[![Conda Platforms](https://img.shields.io/conda/pn/conda-forge/chfem.svg)](https://anaconda.org/conda-forge/chfem)
 
 # chfem
 

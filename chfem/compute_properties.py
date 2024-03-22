@@ -21,7 +21,9 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     :type mat_props: dict
     :param voxel_size: The edge length of each voxel in the domain, defaults to 1e-6 meters.
     :type voxel_size: float, optional
-    :param solver: The type of solver to use ('cg' for Conjugate Gradient, 'minres' for MINimal RESidual), defaults to 'minres'.
+    :param solver: The type of solver to use ('cg' for Conjugate Gradient, 'minres' for MINimal RESidual). 
+    Defaults to 'cg' for conductivity and elasticity, and 'minres' for permeability. 
+    Options: 'cg', 'minres' (5 vectors implementations, faster but more memory), 'cg3', 'minres3' (3 vectors, slower but less memory), 'cg2', 'minres2' (2 vectors, less memory but not fields output).
     :type solver: str, optional
     :param solver_tolerance: The tolerance for the solver convergence criterion, defaults to 1e-6.
     :type solver_tolerance: float, optional
