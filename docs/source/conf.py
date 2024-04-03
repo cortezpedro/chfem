@@ -45,7 +45,7 @@ language = 'python'
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', '**.ipynb_checkpoints']
 
 MOCK_MODULES = ['matplotlib', 'matplotlib.backends', 'matplotlib.backends.backend_qt5agg', 'matplotlib.figure', 'matplotlib.pyplot', 'matplotlib.colors', 'matplotlib.widgets',
-                'numpy', 'numpy.core', 'chfem', 'numpy.core.multiarray', 'import chfem.compute_properties']
+                'numpy', 'numpy.core', 'numpy.core.multiarray', 'chfem.wrapper']
 for module_name in MOCK_MODULES:
     sys.modules[module_name] = mock.Mock()
 

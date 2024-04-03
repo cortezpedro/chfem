@@ -11,6 +11,7 @@
 + Thermal conductivity $\rightarrow$ $\kappa\nabla^{2}u=0$
 + Linear elasticity $\rightarrow$ $\nabla\cdot\mathbf{C}\nabla\mathbf{u}=0$
 + Permeability $\rightarrow$ $\mu\nabla^{2}\mathbf{u}-\nabla p+\mathbf{b}=0$ ; $\nabla\cdot\mathbf{u} -\tau p=0$
++ Thermal Expansion $\rightarrow$ $\nabla\cdot\left(\mathbf{C}\nabla\mathbf{u} - \mathbf{C}\mathbf{\alpha}\Delta\tau\right)=0$
 
 The program follows a lightweight matrix-free approach to image-based finite element analysis, exploring GPU resources with CUDA to achieve significant performance gains. Our end goal is to be able to run large problems ($10^9$ DOFs) with relatively acessible graphics cards. Following is a visualization of the output from a permeability simulation.
 

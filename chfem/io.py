@@ -1,16 +1,17 @@
 import numpy as np
 
 def import_raw(filename, shape, dtype=np.uint8):
-    """
-    Reads a .raw file into a numpy array.
+    """ Reads a .raw file (input for chfem_exec) into a numpy array.
 
-    Parameters:
-    - filename: The path to the .raw file.
-    - shape: The shape of the numpy array. Should be a tuple (z, y, x) for 3D data.
-    - dtype: The data type of the array. Defaults to np.uint8.
+    :param filename: The path to the .raw file.
+    :type filename: str
+    :param shape: The shape of the numpy array. Should be a tuple (z, y, x) for 3D data.
+    :type shape: tuple(int, int, int)
+    :param dtype: The data type of the array. Defaults to np.uint8.
+    :type dtype: np.dtype
 
-    Returns:
-    - A numpy array with the specified shape and dtype, containing the data from the raw file.
+    :return: A numpy array with the specified shape and dtype, containing the data from the raw file.
+    :rtype: np.ndarray
     """
     # Ensure the filename ends with .raw
     if not filename.endswith('.raw'):

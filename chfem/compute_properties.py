@@ -11,7 +11,7 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     This function calculates the effective thermal conductivity, linear elasticity,
     or permeability of a material sample characterized by a 3D domain. The domain is
     discretized into voxels, each assigned a material phase with specific properties.
-    It interfaces with the chfem library to perform image-based finite element analysis.
+    It interfaces with the chfem cuda/c library to perform image-based finite element analysis.
 
     :param property: The physical property to be computed ('conductivity', 'elasticity', 'permeability').
     :type property: str
@@ -22,8 +22,8 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     :param voxel_size: The edge length of each voxel in the domain, defaults to 1e-6 meters.
     :type voxel_size: float, optional
     :param solver: The type of solver to use ('cg' for Conjugate Gradient, 'minres' for MINimal RESidual). 
-    Defaults to 'cg' for conductivity and elasticity, and 'minres' for permeability. 
-    Options: 'cg', 'minres' (5 vectors implementations, faster but more memory), 'cg3', 'minres3' (3 vectors, slower but less memory), 'cg2', 'minres2' (2 vectors, less memory but not fields output).
+        Defaults to 'cg' for conductivity and elasticity, and 'minres' for permeability. 
+        Options: 'cg', 'minres' (5 vectors implementations, faster but more memory), 'cg3', 'minres3' (3 vectors, slower but less memory), 'cg2', 'minres2' (2 vectors, less memory but not fields output).
     :type solver: str, optional
     :param solver_tolerance: The tolerance for the solver convergence criterion, defaults to 1e-6.
     :type solver_tolerance: float, optional
@@ -42,7 +42,7 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     :param nf_filepath: Provide the path to a Neutral File (.nf) to specify the simulation settings.
     :type nf_filepath: str, optional
     :return: The effective property coefficient.
-    :rtype: float
+    :rtype: list
     
     :Example:
     >>> import chfem

@@ -12,4 +12,3 @@ chfem
 
    chfem.compute_properties
    chfem.io
-   chfem.wrapper
