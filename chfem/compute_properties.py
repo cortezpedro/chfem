@@ -87,8 +87,8 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
             
         if array.dtype != np.uint8:
             raise ValueError("Domain must be uint8 dtype.")
-        elif array.ndim != 3:
-            raise ValueError("Domain must be 3D.")
+        #elif array.ndim != 3:
+        #    raise ValueError("Domain must be 3D.")
         
         unique_ids = np.unique(array)
         if 0 not in unique_ids:
@@ -114,7 +114,8 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
         nf_filename = tmp_nf_file.name
 
     # convert array to contiguous C order
-    array = np.ascontiguousarray(array.transpose(2, 1, 0))
+    #array = np.ascontiguousarray(array.transpose(2, 1, 0))
+    array = np.ascontiguousarray(np.reshape(array,(array.size)))
 
     print("Calling chfem wrapper")
     eff_coeff = run(array, nf_filename, analysis_type, direction_int, solver_type, precondition, output_fields_flag)

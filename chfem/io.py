@@ -1,14 +1,78 @@
 import numpy as np
 
-def import_raw(filename, shape, dtype=np.uint8):
+def import_nf(filename):
+    """ Reads a .nf file (input for chfem_exec) into a python dict.
+
+        :param filename: The path to the .nf file.
+        :type filename: str
+        :return dictionary with .nf data
+        :rtype dict
+    """
+    # Ensure the filename ends with .nf
+    if not filename.endswith('.nf'):
+        raise ValueError("Filename does not end with '.nf'")
+    
+    lines = [] 
+    with open(filename) as f:
+        lines.extend( [line.rstrip() for line in f] )
+    
+    data = {}
+    data["type_of_analysis"] = None
+    data["type_of_solver"] = None
+    data["type_of_rhs"] = None
+    data["number_of_iterations"] = None
+    data["refinement"] = None
+    data["number_of_materials"] = None
+    
+    for key in data:
+        ii = lines.index(f'%{key}')
+        data[key] = int(lines[ii+1])
+    
+    ii = lines.index('%voxel_size')
+    data["voxel_size"] = float(lines[ii+1])
+    
+    ii = lines.index('%solver_tolerance')
+    data["solver_tolerance"] = float(lines[ii+1])
+    
+    ii = lines.index('%image_dimensions')
+    nx, ny, nz = tuple(map(int,lines[ii+1].split()))
+    data["image_dimensions"] = ( nz, ny, nx ) # for numpy 3D indexing of contiguous row-major array
+    
+    ii = lines.index('%properties_of_materials')
+    data["properties_of_materials"] = []
+    for jj in range(1,data["number_of_materials"]+1):
+        props_str = lines[ii+jj].split()
+        clr = int(props_str[0])
+        props = []
+        for p in props_str[1:]:
+            props.append( float(p) )
+        data["properties_of_materials"].append( ( clr, *props ) )
+    
+    data["volume_fraction"] = None
+    try: # volume_fraction might not be in .nf file
+        ii = lines.index('%volume_fraction')
+        data["volume_fraction"] = tuple(map(float,lines[ii+1].split()))
+    except Exception as ex:
+        print(ex)
+        
+    data["data_type"] = None
+    try: # data_type might not be in .nf file
+        ii = lines.index('%data_type')
+        data["volume_fraction"] = lines[ii+1]
+    except Exception as ex:
+        print(ex)
+    
+    return data
+
+def import_raw(filename, shape=None, dtype=np.uint8):
     """ Reads a .raw file (input for chfem_exec) into a numpy array.
 
     :param filename: The path to the .raw file.
     :type filename: str
-    :param shape: The shape of the numpy array. Should be a tuple (z, y, x) for 3D data.
+    :param shape: The shape of the numpy array. Should be a tuple (z, y, x) for 3D data, (y, x) for 2D data.
     :type shape: tuple(int, int, int)
     :param dtype: The data type of the array. Defaults to np.uint8.
-    :type dtype: np.dtype
+    :type dtype: np.dtype or string
 
     :return: A numpy array with the specified shape and dtype, containing the data from the raw file.
     :rtype: np.ndarray
@@ -16,127 +80,124 @@ def import_raw(filename, shape, dtype=np.uint8):
     # Ensure the filename ends with .raw
     if not filename.endswith('.raw'):
         raise ValueError("Filename does not end with '.raw'")
-
-    # Calculate the expected size of the file in bytes
-    expected_size = np.prod(shape) * np.dtype(dtype).itemsize
-
+    
     # Read the raw data from the file
     with open(filename, "rb") as file_raw:
         raw_data = file_raw.read()
 
-    # Check if the file size matches the expected size
-    if len(raw_data) != expected_size:
-        raise ValueError(f"File size ({len(raw_data)}) does not match expected size ({expected_size})")
+    if not shape is None:
+        # Calculate the expected size of the file in bytes
+        expected_size = np.prod(shape) * np.dtype(dtype).itemsize    
+
+        # Check if the file size matches the expected size
+        if len(raw_data) != expected_size:
+            raise ValueError(f"File size ({len(raw_data)}) does not match expected size ({expected_size})")
 
     # Convert the raw data to a numpy array
     data_array = np.frombuffer(raw_data, dtype=dtype)
 
-    # Reshape the array to the specified shape
-    data_array = data_array.reshape(shape)
+    if not shape is None:
+        # Reshape the array to the specified shape
+        data_array = data_array.reshape(shape)
 
     return data_array
 
-def import_scalar_field_from_chfem(filename, domain_shape, rotate_domain=True):
+def import_scalar_field_from_chfem(filename, domain_shape, rotate_domain=False, dtype=np.float64):
     """ Import scalar field (e.g. temperature, pressure) output from chfem
 
         :param filename: file path and name of .bin file
         :type filename: string
         :param domain_shape: shape of domain for which the scalar field was generated
         :type domain_shape: (int, int, int)
-        :param rotate_domain: rotate the domain to be in the same format as export
+        :param rotate_domain: rotate the domain to be in (x,y,z) format. default is (z,y,x), same as export.
         :type rotate_domain: bool
-        :return: scalar field (x,y,z)
+        :param dtype: The data type of the array. Defaults to np.uint8.
+        :type dtype: np.dtype or string
+        :return: scalar field
         :rtype: np.ndarray
     """
-    converted_shape = (domain_shape[2], domain_shape[0], domain_shape[1])
-    domain = np.fromfile(filename).reshape(converted_shape)
+    
+    # 2D
+    if len(domain_shape) == 2:
+        domain = np.fromfile(filename, dtype=dtype).reshape( (domain_shape[1],domain_shape[0]) ) # [ x, y ] (fields from simulation are transposed xy)
+        if not rotate_domain:
+            domain = domain.transpose() # [ y, x ] == [ row, col ]
+        return domain
+    
+    # 3D
+    converted_shape = (domain_shape[0], domain_shape[2], domain_shape[1]) # [ z, x, y ] (fields from simulation are transposed xy)
+    domain = np.fromfile(filename, dtype=dtype).reshape(converted_shape)
     if rotate_domain:
-        domain = np.rot90(domain, axes=(0, 1))
-        domain = np.rot90(domain, axes=(1, 2))
-        domain = np.rot90(domain, axes=(0, 1))
-        domain = np.rot90(domain, axes=(0, 1))
-
+        domain = domain.transpose(1,2,0) # [ x, y, z ]
+    else:
+        domain = domain.transpose(0,2,1) # [ z, y, x ] == [ slice, row, col ]
     return domain
 
-def import_vector_field_from_chfem(filename, domain_shape, rotate_domain=True, correct_direction=None):
+def import_vector_field_from_chfem(filename, domain_shape, rotate_domain=False, dtype=np.float64):
     """ Import vector field (e.g. heat flux, displacement, velocity) output from chfem
 
         :param filename: file path and name of .bin file
         :type filename: string
         :param domain_shape: shape of domain for which the scalar field was generated
         :type domain_shape: (int, int, int)
-        :param rotate_domain: rotate the domain to be in the same format as export
+        :param rotate_domain: rotate the domain to be in (x,y,z) format. default is (z,y,x), same as export.
         :type rotate_domain: bool
-        :param correct_direction: correct orientation field according to simulation direction, expects 'x', 'y', or 'z'
-        :type correct_direction: str
-        :return: vector field (x,y,z,3)
+        :param dtype: The data type of the array. Defaults to np.uint8.
+        :type dtype: np.dtype or string
+        :return: vector field ( len(domain_shape), *domain_shape )
         :rtype: np.ndarray
     """
-    domain = np.fromfile(filename, dtype=float)
-    converted_shape = (domain_shape[2], domain_shape[0], domain_shape[1])
-
-    orientation = np.zeros(converted_shape + (3,))
-    orientation[:, :, :, 0] = domain[0::3].reshape(converted_shape)
-    orientation[:, :, :, 1] = domain[1::3].reshape(converted_shape)
-    orientation[:, :, :, 2] = domain[2::3].reshape(converted_shape)
+    # 2D
+    if len(domain_shape) == 2:
+        domain = np.fromfile(filename, dtype=dtype).reshape( (domain_shape[1],domain_shape[0],2) ) # [ x, y, vector_field ] (fields from simulation are transposed xy)
+        if rotate_domain:
+            domain = domain.transpose(2,0,1) # [ vector_field, x, y ]
+        else:
+            domain = domain.transpose(2,1,0) # [ vector_field, y, x ]
+        return domain
     
-    if correct_direction is not None:
-        if correct_direction == 'x':
-            orientation[:, :, :, 0] =   orientation[:, :, :, 0]
-            orientation[:, :, :, 1] = - orientation[:, :, :, 1]
-            orientation[:, :, :, 2] = - orientation[:, :, :, 2]
-        elif correct_direction == 'y':
-            orientation[:, :, :, 0] = - orientation[:, :, :, 0]
-            orientation[:, :, :, 1] =   orientation[:, :, :, 1]
-            orientation[:, :, :, 2] =   orientation[:, :, :, 2]
-        elif correct_direction == 'z':
-            orientation[:, :, :, 0] = - orientation[:, :, :, 0]
-            orientation[:, :, :, 1] =   orientation[:, :, :, 1]
-            orientation[:, :, :, 2] =   orientation[:, :, :, 2]
-    
+    # 3D
+    converted_shape = (domain_shape[0], domain_shape[2], domain_shape[1]) # [ z, x, y ] (fields from simulation are transposed xy)
+    domain = np.fromfile(filename, dtype=dtype)
+    domain = np.reshape( domain, ( *converted_shape, 3) ) # [ z, x, y, vector_field ]
     if rotate_domain:
-        orientation = np.rot90(orientation, axes=(0, 1))
-        orientation = np.rot90(orientation, axes=(1, 2))
-        orientation = np.rot90(orientation, axes=(0, 1))
-        orientation = np.rot90(orientation, axes=(0, 1))
+        domain = domain.transpose(3,1,2,0) # [ vector_field, x, y, z ]
+    else:
+        domain = domain.transpose(3,0,2,1) # [ vector_field, z, y, x ]
+    return domain
 
-    return orientation
-
-def import_stress_field_from_chfem(filename, domain_shape, rotate_domain=True):
+def import_stress_field_from_chfem(filename, domain_shape, rotate_domain=False, dtype=np.float64):
     """ Import stress fields output from chfem
 
         :param filename: file path and name of .bin file
         :type filename: string
         :param domain_shape: shape of domain for which the scalar field was generated
         :type domain_shape: (int, int, int)
-        :param rotate_domain: rotate the domain to be in the same format as export
+        :param rotate_domain: rotate the domain to be in (x,y,z) format. default is (z,y,x), same as export.
         :type rotate_domain: bool
-        :return: direct stresses (x,y,z,3) and shear stresses (x,y,z,3)
+        :param dtype: The data type of the array. Defaults to np.uint8.
+        :type dtype: np.dtype or string
+        :return: vector field ( stress_field, *domain_shape )  [ stress_field=3 (2D) or stress_field=6 (3D) ]
         :rtype: (np.ndarray, np.ndarray)
     """
-    domain = np.fromfile(filename, dtype=float)
-    converted_shape = (domain_shape[2], domain_shape[0], domain_shape[1])
-
-    sigma = np.zeros(converted_shape + (3,))
-    tau = np.zeros(converted_shape + (3,))
-    sigma[:, :, :, 0] = domain[0::6].reshape(converted_shape)
-    sigma[:, :, :, 1] = domain[1::6].reshape(converted_shape)
-    sigma[:, :, :, 2] = domain[2::6].reshape(converted_shape)
-    tau[:, :, :, 0] = domain[3::6].reshape(converted_shape)
-    tau[:, :, :, 1] = domain[4::6].reshape(converted_shape)
-    tau[:, :, :, 2] = domain[5::6].reshape(converted_shape)
-
+    # 2D
+    if len(domain_shape) == 2:
+        domain = np.fromfile(filename, dtype=dtype).reshape( (domain_shape[1],domain_shape[0],3) ) # [ x, y, stress_field ] (fields from simulation are transposed xy)
+        if rotate_domain:
+            domain = domain.transpose(2,0,1) # [ stress_field, x, y ]
+        else:
+            domain = domain.transpose(2,1,0) # [ stress_field, y, x ]
+        return domain
+    
+    # 3D
+    converted_shape = (domain_shape[0], domain_shape[2], domain_shape[1]) # [ z, x, y ] (fields from simulation are transposed xy)
+    domain = np.fromfile(filename, dtype=dtype)
+    domain = np.reshape( domain, ( *converted_shape, 6) ) # [ z, x, y, stress_field ]
     if rotate_domain:
-        sigma = np.rot90(sigma, axes=(0, 1))
-        sigma = np.rot90(sigma, axes=(1, 2))
-        sigma = np.rot90(sigma, axes=(0, 1))
-        sigma = np.rot90(sigma, axes=(0, 1))
-        tau = np.rot90(tau, axes=(0, 1))
-        tau = np.rot90(tau, axes=(1, 2))
-        tau = np.rot90(tau, axes=(0, 1))
-        tau = np.rot90(tau, axes=(0, 1))
-
-    return sigma, tau
+        domain = domain.transpose(3,1,2,0) # [ stress_field, x, y, z ]
+    else:
+        domain = domain.transpose(3,0,2,1) # [ stress_field, z, y, x ]
+    return domain
 
 def export_for_chfem(filename, array, analysis_type, mat_props=None,
                      voxel_size=1, solver_type=0, rhs_type=0, refinement=1,
@@ -146,7 +207,7 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
 
         :param filename: filepath and name
         :type filename: string
-        :param array: array to be exported
+        :param array: array to be exported. shape = (z,y,x)==[slice,row,col]
         :type array: np.array
         :param analysis_type: 0 = conductivity, 1 = elasticity, 2 = permeability
         :type analysis_type: int
@@ -168,6 +229,9 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
         :type solver_maxiter: int
         :param tmp_nf_file: only for use within the python API
         :type tmp_nf_file: file
+        
+        :return dictionary with .nf data
+        :rtype dict
 
         :Example:
         >>> export_for_chfem('200_fiberform', array, 2, solver_tolerance=1e-6, solver_maxiter=100000)
@@ -216,7 +280,10 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
     jdata["voxel_size"] = voxel_size
     jdata["solver_tolerance"] = solver_tolerance
     jdata["number_of_iterations"] = solver_maxiter
-    jdata["image_dimensions"] = list(domain.shape)
+    if len(domain.shape) == 2:
+        jdata["image_dimensions"] = [domain.shape[1],domain.shape[0],0] # [ x, y, 0 ]
+    else:
+        jdata["image_dimensions"] = [domain.shape[2],domain.shape[1],domain.shape[0]] # [ x, y, z ]
     jdata["refinement"] = refinement
     jdata["number_of_materials"] = len(materials)
     jdata["properties_of_materials"] = properties_of_materials
@@ -247,8 +314,6 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
     if export_raw:
         if filename[-4:] != '.raw':
             filename = filename + '.raw'
-        with open(filename, "bw") as file_raw:
-            for k in range(domain.shape[2]):
-                (domain[:, :, k].T).tofile(file_raw)
+        domain.tofile(filename)
     
     return jdata
