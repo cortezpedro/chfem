@@ -644,88 +644,425 @@ void printC_thermal_3D(hmgModel_t *model, char *dest){
   }
 	return;
 }
+//------------------------------------------------------------------------------}
+void fluxFromTemp_thermal_3D(var *q, var *t, var k, var x, var y, var z){
+	var x1 = (1.0-x), y1 = (1.0-y), z1 = (1.0-z);
+	var B[24] = { -y1*z, y1*z, y*z, -y*z, -y1*z1, y1*z1, y*z1, -y*z1,
+	              -x1*z, -x*z, x*z, x1*z, -x1*z1, -x*z1, x*z1, x1*z1,
+		       x1*y1, x*y1, x*y, x1*y, -x1*y1, -x*y1, -x*y, -x1*y };
+
+	q[0] = 0.0;
+	q[1] = 0.0;
+	q[2] = 0.0;
+	for (unsigned int i=0; i<8; i++){
+		q[0] +=     B[i] * t[i];
+		q[1] +=  B[i+ 8] * t[i];
+		q[2] +=  B[i+16] * t[i];
+	}
+	q[0] *= k;
+	q[1] *= k;
+	q[2] *= k;
+	return;
+}
 //------------------------------------------------------------------------------
 void saveFields_thermal_3D(hmgModel_t *model, cudapcgVar_t * T){
 
   cudapcgVar_t * Q = (cudapcgVar_t *)malloc(sizeof(cudapcgVar_t)*model->m_ndof*3);
+  for (unsigned int i=0; i<model->m_ndof*3; i++){
+    Q[i] = 0.0;
+  }
 
   unsigned int rows = model->m_ny-1;
   unsigned int cols = model->m_nx-1;
-  unsigned int layers = model->m_nz-1;
+  unsigned int lays = model->m_nz-1;
   unsigned int rowscols = rows*cols;
-	unsigned int voxels = rowscols*layers;
+  
+  unsigned int dof, n, e;
 
-  unsigned int n_front, n_back;
+  var local_Q[3];
+  var local_T[8];
+  
+  var k;
+  
+  #pragma omp parallel for private(local_Q,local_T,n,dof,k)
+  for (unsigned int e=0;e<model->m_nelem; e++){
 
-  // Grad(T) X
-  #pragma omp parallel for private(n_front,n_back)
-  for (unsigned int n=0; n<model->m_ndof; n++){
-    n_front = (n/rowscols)*rowscols+(((n%rowscols)+rows)%rowscols); // WALK_RIGHT
-    n_back  = (n/rowscols)*rowscols+(((n%rowscols)+(cols-1)*rows)%rowscols); // WALK_LEFT
-    Q[3*n] = 0.5*(T[n_front]-T[n_back])/model->m_elem_size;
-  }
+		k = model->props[model->elem_material_map[e]];
+		
+		// node 0 (left,bottom,near)
+		n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+		dof = model->node_dof_map[n];
+		local_T[0] = (var) T[dof];
 
-  // Grad(T) Y
-  #pragma omp parallel for private(n_front,n_back)
-  for (unsigned int n=0; n<model->m_ndof; n++){
-    n_front = n+(-1+rows*(!(n%rows))); // WALK_UP
-    n_back  = n+( 1-rows*(!((n+1)%rows))); // WALK_DOWN
-    Q[3*n+1] = 0.5*(T[n_front]-T[n_back])/model->m_elem_size;
-  }
+		// node 1 (right,bottom,near)
+		n+=model->m_ny;
+		dof = model->node_dof_map[n];
+		local_T[1] = (var) T[dof];
 
-  // Grad(T) Z
-  #pragma omp parallel for private(n_front,n_back)
-  for (unsigned int n=0; n<model->m_ndof; n++){
-    n_front = (n+rowscols)%model->m_nelem; // WALK_FAR
-    n_back  = (n+(layers-1)*rowscols)%model->m_nelem; // WALK_NEAR
-    Q[3*n+2] = 0.5*(-T[n_front]+T[n_back])/model->m_elem_size;
-  }
+		// node 2 (right,top,near)
+		n-=1;
+		dof = model->node_dof_map[n];
+		local_T[2] = (var) T[dof];
 
+		// node 3 (left,top,near)
+		n-=model->m_ny;
+		dof = model->node_dof_map[n];
+		local_T[3] = (var) T[dof];
+
+		// node 4 (left,bottom,far)
+		n+=1+model->m_nx*model->m_ny;
+		dof = model->node_dof_map[n];
+		local_T[4] = (var) T[dof];
+
+		// node 5 (right,bottom,far)
+		n+=model->m_ny;
+		dof = model->node_dof_map[n];
+		local_T[5] = (var) T[dof];
+
+		// node 6 (right,top,far)
+		n-=1;
+		dof = model->node_dof_map[n];
+		local_T[6] = (var) T[dof];
+
+		// node 7 (left,top,far)
+		n-=model->m_ny;
+		dof = model->node_dof_map[n];
+		local_T[7] = (var) T[dof];
+		
+		fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,1.0,0.0);
+		Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+		
+		// node 0 (left,bottom,near)
+		n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+		dof = model->node_dof_map[n];
+		
+		fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,0.0,1.0);
+		Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		// node 1 (right,bottom,near)
+		n+=model->m_ny;
+		dof = model->node_dof_map[n];
+		
+		fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,0.0,1.0);
+		Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		// node 2 (right,top,near)
+		n-=1;
+		dof = model->node_dof_map[n];
+		
+		fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,1.0,1.0);
+		Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		// node 3 (left,top,near)
+		n-=model->m_ny;
+		dof = model->node_dof_map[n];
+		
+		fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,1.0,1.0);
+		Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		// node 4 (left,bottom,far)
+		n+=1+model->m_nx*model->m_ny;
+		dof = model->node_dof_map[n];
+		
+		fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,0.0,0.0);
+		Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		// node 5 (right,bottom,far)
+		n+=model->m_ny;
+		dof = model->node_dof_map[n];
+		
+		fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,0.0,0.0);
+		Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		// node 6 (right,top,far)
+		n-=1;
+		dof = model->node_dof_map[n];
+		
+		fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,1.0,0.0);
+		Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+	}
+	
 	// Compensate for periodic borders
-  if (model->m_hmg_flag == HOMOGENIZE_X){
-		for (unsigned int i=0; i<layers; i++){
-			for (unsigned int n=(i*rowscols); n<(i*rowscols+rows); n++){
-				Q[3*n] += 0.5*cols/model->m_elem_size;
-			}
-			for (unsigned int n=((i+1)*rowscols-rows); n<((i+1)*rowscols); n++){
-				Q[3*n] += 0.5*cols/model->m_elem_size;
-			}
+	if (model->m_hmg_flag == HOMOGENIZE_X){
+		for (unsigned int l=0; l<lays; l++){
+			for (unsigned int r=0; r<rows; r++){
+			e = r + (rowscols-rows) + l*rowscols;
+			k = model->props[model->elem_material_map[e]];
+
+			local_T[0] = 0.0;
+			local_T[1] = (var) cols;
+			local_T[2] = (var) cols;
+			local_T[3] = 0.0;
+			local_T[4] = 0.0;
+			local_T[5] = (var) cols;
+			local_T[6] = (var) cols;
+			local_T[7] = 0.0;
+
+			// node 0 (left,bottom,near)
+			n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+			dof = model->node_dof_map[n];
+			fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,0.0,1.0);
+			Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		  Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		  Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			// node 3 (left,top,near)
+			n-=1;
+			dof = model->node_dof_map[n];
+			fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,1.0,1.0);
+			Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		  Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		  Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			// node 4 (left,bottom,far)
+			n+=1+model->m_nx*model->m_ny;
+			dof = model->node_dof_map[n];
+			fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,0.0,0.0);
+			Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		  Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		  Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			// node 7 (left,top,far)
+			n-=1;
+			dof = model->node_dof_map[n];
+			fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,1.0,0.0);
+			Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		  Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		  Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+			
+			local_T[0] = -((var) cols);
+			local_T[1] = 0.0;
+			local_T[2] = 0.0;
+			local_T[3] = -((var) cols);
+			local_T[4] = -((var) cols);
+			local_T[5] = 0.0;
+			local_T[6] = 0.0;
+			local_T[7] = -((var) cols);
+			
+			// node 1 (right,bottom,near)
+			n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny + model->m_ny;
+			dof = model->node_dof_map[n];
+			fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,0.0,1.0);
+			Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		  Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		  Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			// node 2 (right,top,near)
+			n-=1;
+			dof = model->node_dof_map[n];
+			fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,1.0,1.0);
+			Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		  Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		  Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			// node 5 (right,bottom,far)
+			n+=1+model->m_nx*model->m_ny;
+			dof = model->node_dof_map[n];
+			fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,0.0,0.0);
+			Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		  Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		  Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			// node 6 (right,top,far)
+			n-=1;
+			dof = model->node_dof_map[n];
+			fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,1.0,0.0);
+			Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		  Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		  Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+		}
 		}
   } else if (model->m_hmg_flag == HOMOGENIZE_Y){
-		for (unsigned int i=0; i<layers; i++){
-			for (unsigned int n=(i*rowscols); n<((i+1)*rowscols-rows+1); n+=rows){
-				Q[3*n+1] += 0.5*rows/model->m_elem_size;
-			}
-			for (unsigned int n=(i*rowscols+rows-1); n<((i+1)*rowscols); n+=rows){
-				Q[3*n+1] += 0.5*rows/model->m_elem_size;
-			}
-		}
-  } else if (model->m_hmg_flag == HOMOGENIZE_Z){
-		for (unsigned int n=0; n<rowscols; n++){
-			Q[3*n+2] += 0.5*layers/model->m_elem_size;
-		}
-		for (unsigned int n=((layers-1)*rowscols); n<voxels; n++){
-			Q[3*n+2] += 0.5*layers/model->m_elem_size;
-		}
-	}
+		for (unsigned int l=0; l<lays; l++){
+			for (unsigned int c=0; c<cols; c++){
+				e = c*rows + l*rowscols;
+			  k = model->props[model->elem_material_map[e]];
 
-  // Q = -kappa * Grad(T)
-  cudapcgMap_t matkey;
-  var kappa;
-  #pragma omp parallel for private(matkey,kappa)
-  for (unsigned int n=0; n<model->m_ndof; n++){
-    matkey = model->dof_material_map[n];
-    kappa  = model->props[matkey&MATKEY_BITSTEP_RANGE_3D];
-    kappa += model->props[(matkey>>=MATKEY_BITSTEP_3D)&MATKEY_BITSTEP_RANGE_3D];
-    kappa += model->props[(matkey>>=MATKEY_BITSTEP_3D)&MATKEY_BITSTEP_RANGE_3D];
-    kappa += model->props[(matkey>>=MATKEY_BITSTEP_3D)&MATKEY_BITSTEP_RANGE_3D];
-    kappa += model->props[(matkey>>=MATKEY_BITSTEP_3D)&MATKEY_BITSTEP_RANGE_3D];
-    kappa += model->props[(matkey>>=MATKEY_BITSTEP_3D)&MATKEY_BITSTEP_RANGE_3D];
-    kappa += model->props[(matkey>>=MATKEY_BITSTEP_3D)&MATKEY_BITSTEP_RANGE_3D];
-    kappa += model->props[(matkey>>=MATKEY_BITSTEP_3D)&MATKEY_BITSTEP_RANGE_3D];
-    Q[3*n]   *= -0.125*kappa;
-    Q[3*n+1] *= -0.125*kappa;
-    Q[3*n+2] *= -0.125*kappa;
+			  local_T[0] = 0.0;
+			  local_T[1] = 0.0;
+			  local_T[2] = (var) rows;
+			  local_T[3] = (var) rows;
+			  local_T[4] = 0.0;
+			  local_T[5] = 0.0;
+			  local_T[6] = (var) rows;
+			  local_T[7] = (var) rows;
+
+			  // node 0 (left,bottom,near)
+			  n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+			  dof = model->node_dof_map[n];
+			  fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,0.0,1.0);
+			  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			  // node 1 (right,bottom,near)
+				n+=model->m_ny;
+			  dof = model->node_dof_map[n];
+			  fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,0.0,1.0);
+			  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			  // node 4 (left,bottom,far)
+			  n+=(model->m_nx-1)*model->m_ny;
+			  dof = model->node_dof_map[n];
+			  fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,0.0,0.0);
+			  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			  // node 5 (right,bottom,far)
+				n+=model->m_ny;
+			  dof = model->node_dof_map[n];
+			  fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,0.0,0.0);
+			  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+			  
+			  local_T[0] = -((var) rows);
+			  local_T[1] = -((var) rows);
+			  local_T[2] = 0.0;
+			  local_T[3] = 0.0;
+			  local_T[4] = -((var) rows);
+			  local_T[5] = -((var) rows);
+			  local_T[6] = 0.0;
+			  local_T[7] = 0.0;
+			  
+			  // node 2 (right,top,near)
+				n -= 1+model->m_nx*model->m_ny;
+			  dof = model->node_dof_map[n];
+			  fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,1.0,1.0);
+			  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			  // node 3 (left,top,near)
+				n-=model->m_ny;
+			  dof = model->node_dof_map[n];
+			  fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,1.0,1.0);
+			  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			  // node 6 (right,top,far)
+				n+=(model->m_nx+1)*model->m_ny;
+			  dof = model->node_dof_map[n];
+			  fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,1.0,0.0);
+			  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+			  // node 7 (left,top,far)
+				n-=model->m_ny;
+			  dof = model->node_dof_map[n];
+			  fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,1.0,0.0);
+			  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+		    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+		    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+		}
+		}
+  }  else if (model->m_hmg_flag == HOMOGENIZE_Z){
+		for (e=0; e<rowscols; e++){
+			k = model->props[model->elem_material_map[e]];
+
+			local_T[0] = (var) lays;
+			local_T[1] = (var) lays;
+			local_T[2] = (var) lays;
+			local_T[3] = (var) lays;
+			local_T[4] = 0.0;
+			local_T[5] = 0.0;
+			local_T[6] = 0.0;
+			local_T[7] = 0.0;
+
+			// node 4 (left,bottom,far)
+			n = 1+(e%rowscols)+((e%rowscols)/rows)+(1+e/rowscols)*model->m_nx*model->m_ny;
+		  dof = model->node_dof_map[n];
+		  fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,0.0,0.0);
+		  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+	    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+	    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		  // node 5 (right,bottom,far)
+			n+=model->m_ny;
+		  dof = model->node_dof_map[n];
+		  fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,0.0,0.0);
+		  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+	    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+	    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		  // node 6 (right,top,far)
+			n-=1;
+		  dof = model->node_dof_map[n];
+		  fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,1.0,0.0);
+		  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+	    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+	    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		  // node 7 (left,top,far)
+			n-=model->m_ny;
+		  dof = model->node_dof_map[n];
+		  fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,1.0,0.0);
+		  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+	    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+	    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+			
+			local_T[0] = 0.0;
+			local_T[1] = 0.0;
+			local_T[2] = 0.0;
+			local_T[3] = 0.0;
+			local_T[4] = -((var) lays);
+			local_T[5] = -((var) lays);
+			local_T[6] = -((var) lays);
+			local_T[7] = -((var) lays);
+			
+			// node 0 (left,bottom,near)
+			n = 1+(e%rowscols)+((e%rowscols)/rows)+(e/rowscols)*model->m_nx*model->m_ny;
+		  dof = model->node_dof_map[n];
+		  fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,0.0,1.0);
+		  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+	    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+	    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		  // node 1 (right,bottom,near)
+			n+=model->m_ny;
+		  dof = model->node_dof_map[n];
+		  fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,0.0,1.0);
+		  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+	    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+	    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		  // node 2 (right,top,near)
+			n-=1;
+		  dof = model->node_dof_map[n];
+		  fluxFromTemp_thermal_3D(local_Q,local_T,k,1.0,1.0,1.0);
+		  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+	    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+	    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+
+		  // node 3 (left,top,near)
+			n-=model->m_ny;
+		  dof = model->node_dof_map[n];
+		  fluxFromTemp_thermal_3D(local_Q,local_T,k,0.0,1.0,1.0);
+		  Q[3*dof]   += (cudapcgVar_t) 0.125*local_Q[0];
+	    Q[3*dof+1] += (cudapcgVar_t) 0.125*local_Q[1];
+	    Q[3*dof+2] += (cudapcgVar_t) 0.125*local_Q[2];
+		}
   }
 
   // Save arrays to binary files
