@@ -5,8 +5,8 @@ def import_nf(filename):
 
         :param filename: The path to the .nf file.
         :type filename: str
-        :return dictionary with .nf data
-        :rtype dict
+        :return: dictionary with .nf data
+        :rtype: dict
     """
     # Ensure the filename ends with .nf
     if not filename.endswith('.nf'):
@@ -230,8 +230,8 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
         :param tmp_nf_file: only for use within the python API
         :type tmp_nf_file: file
         
-        :return dictionary with .nf data
-        :rtype dict
+        :return: dictionary with .nf data
+        :rtype: dict
 
         :Example:
         >>> export_for_chfem('200_fiberform', array, 2, solver_tolerance=1e-6, solver_maxiter=100000)
