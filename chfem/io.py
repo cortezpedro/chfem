@@ -58,7 +58,7 @@ def import_nf(filename):
     data["data_type"] = None
     try: # data_type might not be in .nf file
         ii = lines.index('%data_type')
-        data["volume_fraction"] = lines[ii+1]
+        data["data_type"] = lines[ii+1]
     except Exception as ex:
         print(ex)
     
