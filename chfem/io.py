@@ -61,7 +61,13 @@ def import_nf(filename):
         data["data_type"] = lines[ii+1]
     except Exception as ex:
         print(ex)
-    
+        
+    if '%thermal_expansion' in lines:
+      ii = lines.index('%thermal_expansion')
+      data["thermal_expansion"] = []
+      for jj in range(1,data["number_of_materials"]+1):
+        data["thermal_expansion"].append( float(lines[ii+jj]) )
+        
     return data
 
 def import_raw(filename, shape=None, dtype=np.uint8):
@@ -260,12 +266,19 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
 
     # Prepare material properties for export
     properties_of_materials = []
+    thermal_expansion = []
     if analysis_type == 0:  # conductivity
         for mat_id, cond in mat_props.items():
             properties_of_materials.append(f"{mat_id} {cond}")
     elif analysis_type == 1:  # elasticity
-        for mat_id, (young, poisson) in mat_props.items():
+        for mat_id, elastic_props in mat_props.items():
+            young   = elastic_props[0]
+            poisson = elastic_props[1]
             properties_of_materials.append(f"{mat_id} {young} {poisson}")
+            if len(elastic_props)==3:
+              thermal_expansion.append(f"{elastic_props[2]}")
+            elif thermal_expansion != []:
+              thermal_expansion.append("0.0")
     elif analysis_type == 2:  # permeability
         properties_of_materials = [f"{mat_id}" for mat_id in materials.keys()]
     else:
@@ -289,12 +302,15 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
     jdata["properties_of_materials"] = properties_of_materials
     jdata["volume_fraction"] = list(np.around(volume_fractions, 2))
     jdata["data_type"] = "uint8"
+    
+    if thermal_expansion != []:
+      jdata["thermal_expansion"] = thermal_expansion
 
     if export_nf:  # for chfem
         sText = ''
         for k, v in jdata.items():
             sText += '%' + str(k) + '\n'
-            if k == 'properties_of_materials':
+            if k == 'properties_of_materials' or k == 'thermal_expansion':
                 for prop in v:
                     # Directly append the property string since it's already formatted
                     sText += prop + '\n'

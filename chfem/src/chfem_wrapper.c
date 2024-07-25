@@ -38,12 +38,17 @@ static PyObject* chfem_run(PyObject* self, PyObject *args) {
     // Create a Python list to return the effective coefficients
     unsigned int n;
     if (analysis_type == 0 || analysis_type == 2) n = 3; // thermal or fluid
-    else n = 6;  // elastic 
+    else n = 6;  // elastic
+    
+    // for thermal expansion coefficients
+    unsigned int alpha_n = user_input->num_of_thermal_expansion_coeffs;
 
-    PyObject* list = PyList_New(n);
+    // will store constitutive matrix + thermal expansion in list to be returned
+    PyObject* list = PyList_New(n + (alpha_n>0) );
     if (!list) return NULL;
+    PyObject* row_list = NULL;
     for (unsigned int i = 0; i < n; i++) {
-        PyObject* row_list = PyList_New(n);
+        row_list = PyList_New(n);
         if (!row_list) {
             Py_DECREF(list);
             return NULL;
@@ -58,6 +63,25 @@ static PyObject* chfem_run(PyObject* self, PyObject *args) {
             PyList_SetItem(row_list, j, num);
         }
         PyList_SetItem(list, i, row_list);
+    }
+    
+    // add thermal expansion coefficients to the last (n-th) row
+    if (alpha_n > 0){
+      row_list = PyList_New(alpha_n);
+      if (!row_list) {
+          Py_DECREF(list);
+          return NULL;
+      }
+      for (unsigned int j = 0; j < alpha_n; j++) {
+          PyObject* num = PyFloat_FromDouble(user_input->eff_coeff[n*n + j]);
+          if (!num) {
+              Py_DECREF(row_list);
+              Py_DECREF(list);
+              return NULL;
+          }
+          PyList_SetItem(row_list, j, num);
+      }
+      PyList_SetItem(list, n, row_list);
     }
 
     free(user_input);

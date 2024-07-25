@@ -4,7 +4,7 @@
 #define FEMHMG_H_INCLUDED
 
 logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename, uint8_t* data);
-logical hmgEnd(var **eff_coeff);
+logical hmgEnd();
 
 void hmgSetXReduceFlag(cudapcgFlag_t flag);
 void hmgSetParallelStrategyFlag(cudapcgFlag_t flag);
@@ -21,8 +21,13 @@ void hmgSetHomogenizationFlag(hmgFlag_t flag);
 void hmgSolveHomogenization();
 
 void hmgPrintModelData();
-var *hmgGetConstitutiveMtx();
 void hmgPrintConstitutiveMtx();
+
+var *hmgGetConstitutiveMtx();
+unsigned int hmgGetConstitutiveMtxDim();
+var *hmgGetThermalExpansion();
+unsigned int hmgGetThermalExpansionDim();
+
 logical hmgSaveConstitutiveMtx(const char * filename);
 
 void hmgSaveFields(logical mustExport_flag, logical byElems_flag);

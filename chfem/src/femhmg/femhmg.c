@@ -393,7 +393,7 @@ logical hmgInit(char * data_filename, char * elem_filename, char * sdf_filename,
   return HMG_TRUE;
 }
 //------------------------------------------------------------------------------
-logical hmgEnd(var **eff_coeff){
+logical hmgEnd(){
   if (hmgModel == NULL) return HMG_FALSE;
 
   // Check if x0 matrix should be freed
@@ -408,14 +408,10 @@ logical hmgEnd(var **eff_coeff){
     hmgModel->x0 = NULL;
   }
 
-  if (eff_coeff != NULL && hmgModel->C != NULL) {
-    *eff_coeff = hmgModel->C; // Save the address of C before freeing
-  }
-
   // Free dynamic arrays from memory
   if (hmgModel->elem_material_map)
     free(hmgModel->elem_material_map);  hmgModel->elem_material_map = NULL;
-  free(hmgModel->node_dof_map);       hmgModel->node_dof_map = NULL;
+  free(hmgModel->node_dof_map);         hmgModel->node_dof_map = NULL;
   if (hmgModel->dof_material_map)
     free(hmgModel->dof_material_map); hmgModel->dof_material_map = NULL;
   if (hmgModel->dof_fluid_map)
@@ -426,7 +422,7 @@ logical hmgEnd(var **eff_coeff){
     free(hmgModel->density_map);      hmgModel->density_map = NULL;
   free(hmgModel->Mtxs);               hmgModel->Mtxs = NULL;
   free(hmgModel->CB);                 hmgModel->CB = NULL;
-  hmgModel->C = NULL; // free(hmgModel->C); this deletes first element of eff_coeff
+  free(hmgModel->C);                  hmgModel->C = NULL;
   
   if (hmgModel->thermal_expansion)
   free(hmgModel->thermal_expansion);  hmgModel->thermal_expansion = NULL;
@@ -1332,6 +1328,22 @@ var *hmgGetConstitutiveMtx(){
   return hmgModel->C;
 }
 //------------------------------------------------------------------------------
+unsigned int hmgGetConstitutiveMtxDim(){
+  if (hmgModel == NULL) return 0;
+  return hmgModel->m_C_dim;
+}
+//------------------------------------------------------------------------------
+var *hmgGetThermalExpansion(){
+  if (hmgModel == NULL) return NULL;
+  return hmgModel->thermal_expansion;
+}
+//------------------------------------------------------------------------------
+unsigned int hmgGetThermalExpansionDim(){
+  if (hmgModel == NULL) return 0;
+  if (hmgModel->thermal_expansion == NULL || hmgModel->m_hmg_thermal_expansion_flag == HMG_FALSE) return 0;
+  return hmgModel->m_dim_flag == HMG_2D ? 3 : 6;
+}
+//------------------------------------------------------------------------------
 void hmgPrintConstitutiveMtx(){
   if (hmgModel == NULL) return;
   hmgModel->printC(hmgModel,report_buffer);
@@ -1345,8 +1357,11 @@ logical hmgSaveConstitutiveMtx(const char * filename){
   if (hmgModel == NULL) return HMG_FALSE;
   FILE *file;
   file = fopen(filename,"wb");
-  if (file)
+  if (file){
     fwrite(hmgModel->C,sizeof(var)*hmgModel->m_C_dim,1,file);
+    if (hmgModel->m_hmg_thermal_expansion_flag == HMG_TRUE)
+      fwrite(hmgModel->thermal_expansion,sizeof(var)*hmgGetThermalExpansionDim(),1,file);
+  }
   fclose(file);
   return HMG_TRUE;
 }

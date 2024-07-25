@@ -17,7 +17,7 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     :type property: str
     :param array: 3D numpy array representing the material domain, where each voxel's value is the material phase.
     :type array: np.ndarray
-    :param mat_props: Material properties corresponding to each phase in the domain, provided as {phase_id: cond} for conductivity and {phase_id: (young, poisson)} for elasticity, None for permeability
+    :param mat_props: Material properties corresponding to each phase in the domain, provided as {phase_id: cond} for conductivity and {phase_id: (young, poisson)} or {phase_id: (young, poisson, alpha)} for elasticity, None for permeability
     :type mat_props: dict
     :param voxel_size: The edge length of each voxel in the domain, defaults to 1e-6 meters.
     :type voxel_size: float, optional
@@ -63,7 +63,21 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     if direction not in directions:
         raise ValueError(f"Invalid direction: {direction}")
     direction_int = directions[direction]
-
+    
+    thermal_expansion_flag = False
+    if mat_props is not None and (analysis_type == 1): # elasticity
+      for _, props in mat_props.items():
+        if len(props) == 3:
+          thermal_expansion_flag = True
+          break
+      
+    if thermal_expansion_flag:
+      if direction_int < 6:
+        raise ValueError(f"Invalid direction for thermal expansion analysis: {direction}. Must be \"all\".")
+      for mat, props in mat_props.items():
+        if len(props) < 3:
+          raise ValueError(f"Invalid properties {props} for material {mat}. Expected thermal expansion coefficient.")
+    
     output_fields_flag = 1 if output_fields is not None else 0
 
     if solver is None:

@@ -130,9 +130,21 @@ int runAnalysis(chfemgpuInput_t * user_input){
   // Save result to binary file
   if (user_input->save2binary_flag)
     hmgSaveConstitutiveMtx(user_input->binary_file);
+  
+  // get pointer to effective constitutive matrix and use it to copy data to local array
+  double *mtx_ptr = hmgGetConstitutiveMtx();
+  unsigned int C_dim = hmgGetConstitutiveMtxDim();
+  for (unsigned int i=0; i<C_dim; i++) user_input->eff_coeff[i] = mtx_ptr[i];
+  
+  // get pointer to effective thermal expansion vector and use it to copy data to local array
+  mtx_ptr = hmgGetThermalExpansion();
+  if (mtx_ptr != NULL){
+    user_input->num_of_thermal_expansion_coeffs = hmgGetThermalExpansionDim();
+    for (unsigned int i=0; i < user_input->num_of_thermal_expansion_coeffs; i++) user_input->eff_coeff[C_dim+i] = mtx_ptr[i];
+  }
 
   // Finish femhmg API. (ATTENTION: Will free dynamic arrays from memory)
-  hmgEnd(&(user_input->eff_coeff));
+  hmgEnd();
 
   printf("#######################################################\n");
 
@@ -306,6 +318,7 @@ void initDefaultInput(chfemgpuInput_t * user_input){
   user_input->stopcrit_flag = 0;
   user_input->poremap_flag = 1;
   user_input->xreduce_flag = 2;
+  user_input->num_of_thermal_expansion_coeffs=0;
   return;
 }
 //------------------------------------------------------------------------------

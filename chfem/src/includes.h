@@ -39,7 +39,10 @@ typedef struct _input{
 
   unsigned int xreduce_flag; //cudapcgFlag_t
 
-  var * eff_coeff;  // to return in python API
+  var eff_coeff[42];  // to return in python API
+  // obs: largest size = 6x6 elasticity + 6 thermal_expansion
+  
+  unsigned int num_of_thermal_expansion_coeffs;
 
 } chfemgpuInput_t;
 
