@@ -222,6 +222,7 @@ void assembleRHS_PressureGrad_fluid_2D(hmgModel_t *model){
 //------------------------------------------------------------------------------
 void updateC_fluid_2D(hmgModel_t *model, cudapcgVar_t * V){
   var C_i=0.0,C_j=0.0;
+  var lcl_C_i,lcl_C_j;
   unsigned int i,j;
   if (model->m_hmg_flag == HOMOGENIZE_X){
     i = 0; j = 2;
@@ -229,48 +230,48 @@ void updateC_fluid_2D(hmgModel_t *model, cudapcgVar_t * V){
     i = 1; j = 3;
   }
   unsigned int n, dof;
-  #pragma omp parallel for private(n,dof,C_i,C_j)
+  #pragma omp parallel for private(n,dof,lcl_C_i,lcl_C_j) reduction(+:C_i,C_j)
   for (unsigned int e=0; e<model->m_nelem; e++){
     // Check if this element is fluid
     if ((model->dof_fluid_map[e]>>3)&1){
     
-      C_i = 0.0;
-      C_j = 0.0;
+      lcl_C_i = 0.0;
+      lcl_C_j = 0.0;
 
       n = e+1+(e/(model->m_ny-1));
       dof = model->dof_id_map[model->node_dof_map[n]];
       if (dof < model->m_nVelocityNodes){
-        C_i += model->CB[0] * V[2*dof];
-        C_j += model->CB[9] * V[2*dof+1];
+        lcl_C_i += model->CB[0] * V[2*dof];
+        lcl_C_j += model->CB[9] * V[2*dof+1];
       }
 
       n += model->m_ny;
       dof = model->dof_id_map[model->node_dof_map[n]];
       if (dof < model->m_nVelocityNodes){
-        C_i += model->CB[2]  * V[2*dof];
-        C_j += model->CB[11] * V[2*dof+1];
+        lcl_C_i += model->CB[2]  * V[2*dof];
+        lcl_C_j += model->CB[11] * V[2*dof+1];
       }
 
       n -= 1;
       dof = model->dof_id_map[model->node_dof_map[n]];
       if (dof < model->m_nVelocityNodes){
-        C_i += model->CB[4]  * V[2*dof];
-        C_j += model->CB[13] * V[2*dof+1];
+        lcl_C_i += model->CB[4]  * V[2*dof];
+        lcl_C_j += model->CB[13] * V[2*dof+1];
       }
 
       n -= model->m_ny;
       dof = model->dof_id_map[model->node_dof_map[n]];
       if (dof < model->m_nVelocityNodes){
-        C_i += model->CB[6]  * V[2*dof];
-        C_j += model->CB[15] * V[2*dof+1];
+        lcl_C_i += model->CB[6]  * V[2*dof];
+        lcl_C_j += model->CB[15] * V[2*dof+1];
       }
       
-      #pragma omp critical
-      {
-        model->C[i] += C_i; model->C[j] += C_j;
-      }
+      C_i += lcl_C_i;
+			C_j += lcl_C_j;
     }
   }
+  
+  model->C[i] = C_i; model->C[j] = C_j;
   
   var div = model->m_nelem;
   var mul = model->m_elem_size * model->m_elem_size;

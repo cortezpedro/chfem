@@ -182,7 +182,8 @@ void assembleRHS_fluid_3D(hmgModel_t *model){
 
 //------------------------------------------------------------------------------
 void updateC_fluid_3D(hmgModel_t *model, cudapcgVar_t * V){
-	var C_i=0.0,C_j=0.0,C_k=0.0;
+  var C_i=0.0,C_j=0.0,C_k=0.0;
+  var lcl_C_i,lcl_C_j,lcl_C_k;
   unsigned int dim_y = model->m_ny-1;
   unsigned int dim_xy = (model->m_nx-1)*dim_y;
   unsigned int i,j,k;
@@ -194,85 +195,86 @@ void updateC_fluid_3D(hmgModel_t *model, cudapcgVar_t * V){
 		i = 2; j = 5, k = 8;
 	}
   unsigned int n, dof;
-  #pragma omp parallel for private(n,dof,C_i,C_j,C_k)
+  #pragma omp parallel for private(n,dof,lcl_C_i,lcl_C_j,lcl_C_k) reduction(+:C_i,C_j,C_k)
   for (unsigned int e=0; e<model->m_nelem; e++){
     // Check if this element is fluid
     if ((model->dof_fluid_map[e]>>3)&1){
     
-      C_i = 0.0;
-      C_j = 0.0;
-      C_k = 0.0;
+      lcl_C_i = 0;
+      lcl_C_j = 0;
+      lcl_C_k = 0;
 
 			n = 1+(e%dim_xy)+((e%dim_xy)/dim_y)+(e/dim_xy)*model->m_nx*model->m_ny;
 			dof = model->dof_id_map[model->node_dof_map[n]];
 			if (dof < model->m_nVelocityNodes){
-			  C_i += model->CB[0]  * V[3*dof];
-			  C_j += model->CB[25] * V[3*dof+1];
-			  C_k += model->CB[50] * V[3*dof+2];
+			  lcl_C_i += model->CB[0]  * V[3*dof];
+			  lcl_C_j += model->CB[25] * V[3*dof+1];
+			  lcl_C_k += model->CB[50] * V[3*dof+2];
 			}
 
 			n += model->m_ny;
 			dof = model->dof_id_map[model->node_dof_map[n]];
 			if (dof < model->m_nVelocityNodes){
-			  C_i += model->CB[3]  * V[3*dof];
-			  C_j += model->CB[28] * V[3*dof+1];
-			  C_k += model->CB[53] * V[3*dof+2];
+			  lcl_C_i += model->CB[3]  * V[3*dof];
+			  lcl_C_j += model->CB[28] * V[3*dof+1];
+			  lcl_C_k += model->CB[53] * V[3*dof+2];
 			}
 
 			n -= 1;
 			dof = model->dof_id_map[model->node_dof_map[n]];
 			if (dof < model->m_nVelocityNodes){
-			  C_i += model->CB[6]  * V[3*dof];
-			  C_j += model->CB[31] * V[3*dof+1];
-			  C_k += model->CB[56] * V[3*dof+2];
+			  lcl_C_i += model->CB[6]  * V[3*dof];
+			  lcl_C_j += model->CB[31] * V[3*dof+1];
+			  lcl_C_k += model->CB[56] * V[3*dof+2];
 			}
 
 			n -= model->m_ny;
 			dof = model->dof_id_map[model->node_dof_map[n]];
 			if (dof < model->m_nVelocityNodes){
-			  C_i += model->CB[9]  * V[3*dof];
-			  C_j += model->CB[34] * V[3*dof+1];
-			  C_k += model->CB[59] * V[3*dof+2];
+			  lcl_C_i += model->CB[9]  * V[3*dof];
+			  lcl_C_j += model->CB[34] * V[3*dof+1];
+			  lcl_C_k += model->CB[59] * V[3*dof+2];
 			}
 			
 			n += 1+model->m_nx*model->m_ny;
 			dof = model->dof_id_map[model->node_dof_map[n]];
 			if (dof < model->m_nVelocityNodes){
-			  C_i += model->CB[12] * V[3*dof];
-			  C_j += model->CB[37] * V[3*dof+1];
-			  C_k += model->CB[62] * V[3*dof+2];
+			  lcl_C_i += model->CB[12] * V[3*dof];
+			  lcl_C_j += model->CB[37] * V[3*dof+1];
+			  lcl_C_k += model->CB[62] * V[3*dof+2];
 			}
 
 			n += model->m_ny;
 			dof = model->dof_id_map[model->node_dof_map[n]];
 			if (dof < model->m_nVelocityNodes){
-			  C_i += model->CB[15] * V[3*dof];
-			  C_j += model->CB[40] * V[3*dof+1];
-			  C_k += model->CB[65] * V[3*dof+2];
+			  lcl_C_i += model->CB[15] * V[3*dof];
+			  lcl_C_j += model->CB[40] * V[3*dof+1];
+			  lcl_C_k += model->CB[65] * V[3*dof+2];
 			}
 
 			n -= 1;
 			dof = model->dof_id_map[model->node_dof_map[n]];
 			if (dof < model->m_nVelocityNodes){
-			  C_i += model->CB[18] * V[3*dof];
-			  C_j += model->CB[43] * V[3*dof+1];
-			  C_k += model->CB[68] * V[3*dof+2];
+			  lcl_C_i += model->CB[18] * V[3*dof];
+			  lcl_C_j += model->CB[43] * V[3*dof+1];
+			  lcl_C_k += model->CB[68] * V[3*dof+2];
 			}
 
 			n -= model->m_ny;
 			dof = model->dof_id_map[model->node_dof_map[n]];
 			if (dof < model->m_nVelocityNodes){
-			  C_i += model->CB[21] * V[3*dof];
-			  C_j += model->CB[46] * V[3*dof+1];
-			  C_k += model->CB[71] * V[3*dof+2];
+			  lcl_C_i += model->CB[21] * V[3*dof];
+			  lcl_C_j += model->CB[46] * V[3*dof+1];
+			  lcl_C_k += model->CB[71] * V[3*dof+2];
 			}
 			
-			#pragma omp critical
-		  {
-			  model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-		  }
+			C_i += lcl_C_i;
+			C_j += lcl_C_j;
+			C_k += lcl_C_k;
     }
   }
+  
+  model->C[i] = C_i; model->C[j] = C_j; model->C[k] = C_k;
   
   var div = model->m_nelem;
   var mul = model->m_elem_size * model->m_elem_size; // not sure about this yet

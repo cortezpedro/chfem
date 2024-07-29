@@ -879,15 +879,12 @@ void updateC_elastic_3D_thermal_expansion(hmgModel_t *model, cudapcgVar_t * D){
 	var local_alpha[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
 
   var C_i=0.0, C_j=0.0, C_k=0.0, C_x=0.0, C_y=0.0, C_z=0.0;
-  var *pC_i=&stress[0], *pC_j=&stress[1], *pC_k=&stress[2], *pC_x=&stress[3], *pC_y=&stress[4], *pC_z=&stress[5];
   
   // Compute effective stress (similar to updateC)
-	#pragma omp parallel for private(ii,C_i,C_j,C_k,C_x,C_y,C_z,d,thisCB,n)
+	#pragma omp parallel for private(ii,thisCB,d,n) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 	for (e=0;e<model->m_nelem;e++){
 
 		thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
-
-		C_i = 0.0; C_j = 0.0; C_k = 0.0; C_x = 0.0; C_y = 0.0; C_z = 0.0;
 
 		// node 0 (left,bottom,near)
 		n = 1+(e%dim_xy)+((e%dim_xy)/dim_y)+(e/dim_xy)*model->m_nx*model->m_ny;
@@ -952,25 +949,13 @@ void updateC_elastic_3D_thermal_expansion(hmgModel_t *model, cudapcgVar_t * D){
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
-
-		#pragma omp atomic
-		*pC_i += C_i;
-
-		#pragma omp atomic
-		*pC_j += C_j;
-
-		#pragma omp atomic
-		*pC_k += C_k;
-
-		#pragma omp atomic
-		*pC_x += C_x;
-
-		#pragma omp atomic
-		*pC_y += C_y;
-
-		#pragma omp atomic
-		*pC_z += C_z;
 	}
+	stress[0] = C_i;
+	stress[1] = C_j;
+	stress[2] = C_k;
+	stress[3] = C_x;
+	stress[4] = C_y;
+	stress[5] = C_z;
 
 	// Compute effective strain and add thermal expansion contribution to effective stress
 	for (e=0;e<model->m_nelem;e++){
@@ -1121,221 +1106,165 @@ void updateC_elastic_3D(hmgModel_t *model, cudapcgVar_t * D){
 		i = 5; j = 11; k = 17; x = 23; y = 29; z = 35;
 	}
 
-	//C_i = 0.0; C_j = 0.0; C_k = 0.0; C_x = 0.0; C_y = 0.0; C_z = 0.0;
+	C_i = 0.0; C_j = 0.0; C_k = 0.0; C_x = 0.0; C_y = 0.0; C_z = 0.0;
 
 	if (model->m_hmg_flag == HOMOGENIZE_X){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_yz; ei++){
 			e = (model->m_nx-2)*dim_y+ei%dim_y+(ei/dim_y)*dim_xy;
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 
 			// node 1 (right,bottom,near)
-			C_i = thisCB[3];  C_j = thisCB[27]; C_k = thisCB[51];
-			C_x = thisCB[75]; C_y = thisCB[99]; C_z = thisCB[123];
+			C_i += thisCB[3]*dim_x;  C_j += thisCB[27]*dim_x; C_k += thisCB[51]*dim_x;
+			C_x += thisCB[75]*dim_x; C_y += thisCB[99]*dim_x; C_z += thisCB[123]*dim_x;
 
 			// node 2 (right,top,near)
-			C_i += thisCB[6];  C_j += thisCB[30];  C_k += thisCB[54];
-			C_x += thisCB[78]; C_y += thisCB[102]; C_z += thisCB[126];
+			C_i += thisCB[6]*dim_x;  C_j += thisCB[30]*dim_x;  C_k += thisCB[54];
+			C_x += thisCB[78]*dim_x; C_y += thisCB[102]*dim_x; C_z += thisCB[126];
 
 			// node 5 (right,bottom,far)
-			C_i += thisCB[15]; C_j += thisCB[39];  C_k += thisCB[63];
-			C_x += thisCB[87]; C_y += thisCB[111]; C_z += thisCB[135];
+			C_i += thisCB[15]; C_j += thisCB[39];  C_k += thisCB[63]*dim_x;
+			C_x += thisCB[87]; C_y += thisCB[111]; C_z += thisCB[135]*dim_x;
 
 			// node 6 (right,top,far)
-			C_i += thisCB[18]; C_j += thisCB[42];  C_k += thisCB[66];
-			C_x += thisCB[90]; C_y += thisCB[114]; C_z += thisCB[138];
-
-			C_i *= dim_x; C_j *= dim_x; C_k *= dim_x;
-			C_x *= dim_x; C_y *= dim_x; C_z *= dim_x;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[18]*dim_x; C_j += thisCB[42]*dim_x;  C_k += thisCB[66]*dim_x;
+			C_x += thisCB[90]*dim_x; C_y += thisCB[114]*dim_x; C_z += thisCB[138]*dim_x;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xz; ei++){
 			e = (ei%dim_x)*dim_y+(ei/dim_x)*dim_xy;
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 
 			// node 2 (right,top,near)
-			C_i = thisCB[7];  C_j = thisCB[31];  C_k = thisCB[55];
-			C_x = thisCB[79]; C_y = thisCB[103]; C_z = thisCB[127];
+			C_i += thisCB[7]*dim_y;  C_j += thisCB[31]*dim_y;  C_k += thisCB[55]*dim_y;
+			C_x += thisCB[79]*dim_y; C_y += thisCB[103]*dim_y; C_z += thisCB[127]*dim_y;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[10]; C_j += thisCB[34];  C_k += thisCB[58];
-			C_x += thisCB[82]; C_y += thisCB[106]; C_z += thisCB[130];
+			C_i += thisCB[10]*dim_y; C_j += thisCB[34]*dim_y;  C_k += thisCB[58]*dim_y;
+			C_x += thisCB[82]*dim_y; C_y += thisCB[106]*dim_y; C_z += thisCB[130]*dim_y;
 
 			// node 5 (right,top,far)
-			C_i += thisCB[19]; C_j += thisCB[43];  C_k += thisCB[67];
-			C_x += thisCB[91]; C_y += thisCB[115]; C_z += thisCB[139];
+			C_i += thisCB[19]*dim_y; C_j += thisCB[43]*dim_y;  C_k += thisCB[67]*dim_y;
+			C_x += thisCB[91]*dim_y; C_y += thisCB[115]*dim_y; C_z += thisCB[139]*dim_y;
 
 			// node 7 (left,top,far)
-			C_i += thisCB[22]; C_j += thisCB[46];  C_k += thisCB[70];
-			C_x += thisCB[94]; C_y += thisCB[118]; C_z += thisCB[142];
-
-			C_i *= dim_y; C_j *= dim_y; C_k *= dim_y;
-			C_x *= dim_y; C_y *= dim_y; C_z *= dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[22]*dim_y; C_j += thisCB[46]*dim_y;  C_k += thisCB[70]*dim_y;
+			C_x += thisCB[94]*dim_y; C_y += thisCB[118]*dim_y; C_z += thisCB[142]*dim_y;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Z){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xy; ei++){
 			e = ei;
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 
 			// node 0 (left,bottom,near)
-			C_i = thisCB[2];  C_j = thisCB[26]; C_k = thisCB[50];
-			C_x = thisCB[74]; C_y = thisCB[98]; C_z = thisCB[122];
+			C_i += thisCB[2]*dim_z;  C_j += thisCB[26]*dim_z; C_k += thisCB[50]*dim_z;
+			C_x += thisCB[74]*dim_z; C_y += thisCB[98]*dim_z; C_z += thisCB[122]*dim_z;
 
 			// node 1 (right,bottom,near)
-			C_i += thisCB[5];  C_j += thisCB[29];  C_k += thisCB[53];
-			C_x += thisCB[77]; C_y += thisCB[101]; C_z += thisCB[125];
+			C_i += thisCB[5]*dim_z;  C_j += thisCB[29]*dim_z;  C_k += thisCB[53]*dim_z;
+			C_x += thisCB[77]*dim_z; C_y += thisCB[101]*dim_z; C_z += thisCB[125]*dim_z;
 
 			// node 2 (right,top,near)
-			C_i += thisCB[8];  C_j += thisCB[32];  C_k += thisCB[56];
-			C_x += thisCB[80]; C_y += thisCB[104]; C_z += thisCB[128];
+			C_i += thisCB[8]*dim_z;  C_j += thisCB[32]*dim_z;  C_k += thisCB[56]*dim_z;
+			C_x += thisCB[80]*dim_z; C_y += thisCB[104]*dim_z; C_z += thisCB[128]*dim_z;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[11]; C_j += thisCB[35];  C_k += thisCB[59];
-			C_x += thisCB[83]; C_y += thisCB[107]; C_z += thisCB[131];
-
-			C_i *= dim_z; C_j *= dim_z; C_k *= dim_z;
-			C_x *= dim_z; C_y *= dim_z; C_z *= dim_z;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[11]*dim_z; C_j += thisCB[35]*dim_z;  C_k += thisCB[59]*dim_z;
+			C_x += thisCB[83]*dim_z; C_y += thisCB[107]*dim_z; C_z += thisCB[131]*dim_z;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_YZ){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xz; ei++){
 			e = (ei%dim_x)*dim_y+(ei/dim_x)*dim_xy;
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 
 			// node 2 (right,top,near)
-			C_i = thisCB[8];  C_j = thisCB[32];  C_k = thisCB[56];
-			C_x = thisCB[80]; C_y = thisCB[104]; C_z = thisCB[128];
+			C_i += thisCB[8]*dim_y;  C_j += thisCB[32]*dim_y;  C_k += thisCB[56]*dim_y;
+			C_x += thisCB[80]*dim_y; C_y += thisCB[104]*dim_y; C_z += thisCB[128]*dim_y;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[11]; C_j += thisCB[35];  C_k += thisCB[59];
-			C_x += thisCB[83]; C_y += thisCB[107]; C_z += thisCB[131];
+			C_i += thisCB[11]*dim_y; C_j += thisCB[35]*dim_y;  C_k += thisCB[59]*dim_y;
+			C_x += thisCB[83]*dim_y; C_y += thisCB[107]*dim_y; C_z += thisCB[131]*dim_y;
 
 			// node 5 (right,top,far)
-			C_i += thisCB[20]; C_j += thisCB[44];  C_k += thisCB[68];
-			C_x += thisCB[92]; C_y += thisCB[116]; C_z += thisCB[140];
+			C_i += thisCB[20]*dim_y; C_j += thisCB[44]*dim_y;  C_k += thisCB[68]*dim_y;
+			C_x += thisCB[92]*dim_y; C_y += thisCB[116]*dim_y; C_z += thisCB[140]*dim_y;
 
 			// node 7 (left,top,far)
-			C_i += thisCB[23]; C_j += thisCB[47];  C_k += thisCB[71];
-			C_x += thisCB[95]; C_y += thisCB[119]; C_z += thisCB[143];
-
-			C_i *= dim_y; C_j *= dim_y; C_k *= dim_y;
-			C_x *= dim_y; C_y *= dim_y; C_z *= dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[23]*dim_y; C_j += thisCB[47]*dim_y;  C_k += thisCB[71]*dim_y;
+			C_x += thisCB[95]*dim_y; C_y += thisCB[119]*dim_y; C_z += thisCB[143]*dim_y;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_XZ){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xy; ei++){
 			e = ei;
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 
 			// node 0 (left,bottom,near)
-			C_i = thisCB[0];  C_j = thisCB[24]; C_k = thisCB[48];
-			C_x = thisCB[72]; C_y = thisCB[96]; C_z = thisCB[120];
+			C_i += thisCB[0]*dim_z;  C_j += thisCB[24]*dim_z; C_k += thisCB[48]*dim_z;
+			C_x += thisCB[72]*dim_z; C_y += thisCB[96]*dim_z; C_z += thisCB[120]*dim_z;
 
 			// node 1 (right,bottom,near)
-			C_i += thisCB[3];  C_j += thisCB[27]; C_k += thisCB[51];
-			C_x += thisCB[75]; C_y += thisCB[99]; C_z += thisCB[123];
+			C_i += thisCB[3]*dim_z;  C_j += thisCB[27]*dim_z; C_k += thisCB[51]*dim_z;
+			C_x += thisCB[75]*dim_z; C_y += thisCB[99]*dim_z; C_z += thisCB[123]*dim_z;
 
 			// node 2 (right,top,near)
-			C_i += thisCB[6];  C_j += thisCB[30];  C_k += thisCB[54];
-			C_x += thisCB[78]; C_y += thisCB[102]; C_z += thisCB[126];
+			C_i += thisCB[6]*dim_z;  C_j += thisCB[30]*dim_z;  C_k += thisCB[54]*dim_z;
+			C_x += thisCB[78]*dim_z; C_y += thisCB[102]*dim_z; C_z += thisCB[126]*dim_z;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[9];  C_j += thisCB[33];  C_k += thisCB[57];
-			C_x += thisCB[81]; C_y += thisCB[105]; C_z += thisCB[129];
-
-			C_i *= dim_z; C_j *= dim_z; C_k *= dim_z;
-			C_x *= dim_z; C_y *= dim_z; C_z *= dim_z;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[9]*dim_z;  C_j += thisCB[33]*dim_z;  C_k += thisCB[57]*dim_z;
+			C_x += thisCB[81]*dim_z; C_y += thisCB[105]*dim_z; C_z += thisCB[129]*dim_z;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_XY){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xz; ei++){
 			e = (ei%dim_x)*dim_y+(ei/dim_x)*dim_xy;
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 
 			// node 2 (right,top,near)
-			C_i = thisCB[6];  C_j = thisCB[30];  C_k = thisCB[54];
-			C_x = thisCB[78]; C_y = thisCB[102]; C_z = thisCB[126];
+			C_i += thisCB[6]*dim_y;  C_j += thisCB[30]*dim_y;  C_k += thisCB[54]*dim_y;
+			C_x += thisCB[78]*dim_y; C_y += thisCB[102]*dim_y; C_z += thisCB[126]*dim_y;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[9];  C_j += thisCB[33];  C_k += thisCB[57];
-			C_x += thisCB[81]; C_y += thisCB[105]; C_z += thisCB[129];
+			C_i += thisCB[9]*dim_y;  C_j += thisCB[33]*dim_y;  C_k += thisCB[57]*dim_y;
+			C_x += thisCB[81]*dim_y; C_y += thisCB[105]*dim_y; C_z += thisCB[129]*dim_y;
 
 			// node 5 (right,top,far)
-			C_i += thisCB[18]; C_j += thisCB[42];  C_k += thisCB[66];
-			C_x += thisCB[90]; C_y += thisCB[114]; C_z += thisCB[138];
+			C_i += thisCB[18]*dim_y; C_j += thisCB[42]*dim_y;  C_k += thisCB[66]*dim_y;
+			C_x += thisCB[90]*dim_y; C_y += thisCB[114]*dim_y; C_z += thisCB[138]*dim_y;
 
 			// node 7 (left,top,far)
-			C_i += thisCB[21]; C_j += thisCB[45];  C_k += thisCB[69];
-			C_x += thisCB[93]; C_y += thisCB[117]; C_z += thisCB[141];
-
-			C_i *= dim_y; C_j *= dim_y; C_k *= dim_y;
-			C_x *= dim_y; C_y *= dim_y; C_z *= dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[21]*dim_y; C_j += thisCB[45]*dim_y;  C_k += thisCB[69]*dim_y;
+			C_x += thisCB[93]*dim_y; C_y += thisCB[117]*dim_y; C_z += thisCB[141]*dim_y;
 		}
 	}
 
 	unsigned int ii;
 
-	#pragma omp parallel for private(ii,C_i,C_j,C_k,C_x,C_y,C_z,d,thisCB,n)
+	#pragma omp parallel for private(ii,thisCB,d,n) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 	for (e=0;e<model->m_nelem;e++){
 
 		thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
-
-		C_i = 0.0; C_j = 0.0; C_k = 0.0; C_x = 0.0; C_y = 0.0; C_z = 0.0;
 
 		// node 0 (left,bottom,near)
 		n = 1+(e%dim_xy)+((e%dim_xy)/dim_y)+(e/dim_xy)*model->m_nx*model->m_ny;
@@ -1400,22 +1329,20 @@ void updateC_elastic_3D(hmgModel_t *model, cudapcgVar_t * D){
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
-
-		#pragma omp critical
-		{
-			model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-			model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-		}
 	}
-
-	model->C[i] /= model->m_nelem; model->C[j] /= model->m_nelem; model->C[k] /= model->m_nelem;
-	model->C[x] /= model->m_nelem; model->C[y] /= model->m_nelem; model->C[z] /= model->m_nelem;
+	
+	model->C[i] = C_i / model->m_nelem;
+	model->C[j] = C_j / model->m_nelem;
+	model->C[k] = C_k / model->m_nelem;
+	model->C[x] = C_x / model->m_nelem;
+	model->C[y] = C_y / model->m_nelem;
+	model->C[z] = C_z / model->m_nelem;
 
 	return;
 }
 //------------------------------------------------------------------------------
 void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
-	unsigned int e, ei, n;
+  unsigned int e, ei, n;
 	unsigned int dim_x = model->m_nx-1;
 	unsigned int dim_y = model->m_ny-1;
 	unsigned int dim_z = model->m_nz-1;
@@ -1443,11 +1370,11 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 		i = 5; j = 11; k = 17; x = 23; y = 29; z = 35;
 	}
 
-	//C_i = 0.0; C_j = 0.0; C_k = 0.0; C_x = 0.0; C_y = 0.0; C_z = 0.0;
+	C_i = 0.0; C_j = 0.0; C_k = 0.0; C_x = 0.0; C_y = 0.0; C_z = 0.0;
 
 	if (model->m_hmg_flag == HOMOGENIZE_X){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_yz; ei++){
 			e = (model->m_nx-2)*dim_y+ei%dim_y+(ei/dim_y)*dim_xy;
 
@@ -1455,34 +1382,25 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
 
 			// node 1 (right,bottom,near)
-			C_i = thisCB[3];  C_j = thisCB[27]; C_k = thisCB[51];
-			C_x = thisCB[75]; C_y = thisCB[99]; C_z = thisCB[123];
+			C_i += thisCB[3]*scl*dim_x;  C_j += thisCB[27]*scl*dim_x; C_k += thisCB[51]*scl*dim_x;
+			C_x += thisCB[75]*scl*dim_x; C_y += thisCB[99]*scl*dim_x; C_z += thisCB[123]*scl*dim_x;
 
 			// node 2 (right,top,near)
-			C_i += thisCB[6];  C_j += thisCB[30];  C_k += thisCB[54];
-			C_x += thisCB[78]; C_y += thisCB[102]; C_z += thisCB[126];
+			C_i += thisCB[6]*scl*dim_x;  C_j += thisCB[30]*scl*dim_x;  C_k += thisCB[54];
+			C_x += thisCB[78]*scl*dim_x; C_y += thisCB[102]*scl*dim_x; C_z += thisCB[126];
 
 			// node 5 (right,bottom,far)
-			C_i += thisCB[15]; C_j += thisCB[39];  C_k += thisCB[63];
-			C_x += thisCB[87]; C_y += thisCB[111]; C_z += thisCB[135];
+			C_i += thisCB[15]; C_j += thisCB[39];  C_k += thisCB[63]*scl*dim_x;
+			C_x += thisCB[87]; C_y += thisCB[111]; C_z += thisCB[135]*scl*dim_x;
 
 			// node 6 (right,top,far)
-			C_i += thisCB[18]; C_j += thisCB[42];  C_k += thisCB[66];
-			C_x += thisCB[90]; C_y += thisCB[114]; C_z += thisCB[138];
-
-			C_i *= scl*dim_x; C_j *= scl*dim_x; C_k *= scl*dim_x;
-			C_x *= scl*dim_x; C_y *= scl*dim_x; C_z *= scl*dim_x;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[18]*scl*dim_x; C_j += thisCB[42]*scl*dim_x;  C_k += thisCB[66]*scl*dim_x;
+			C_x += thisCB[90]*scl*dim_x; C_y += thisCB[114]*scl*dim_x; C_z += thisCB[138]*scl*dim_x;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xz; ei++){
 			e = (ei%dim_x)*dim_y+(ei/dim_x)*dim_xy;
 
@@ -1490,34 +1408,25 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
 
 			// node 2 (right,top,near)
-			C_i = thisCB[7];  C_j = thisCB[31];  C_k = thisCB[55];
-			C_x = thisCB[79]; C_y = thisCB[103]; C_z = thisCB[127];
+			C_i += thisCB[7]*scl*dim_y;  C_j += thisCB[31]*scl*dim_y;  C_k += thisCB[55]*scl*dim_y;
+			C_x += thisCB[79]*scl*dim_y; C_y += thisCB[103]*scl*dim_y; C_z += thisCB[127]*scl*dim_y;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[10]; C_j += thisCB[34];  C_k += thisCB[58];
-			C_x += thisCB[82]; C_y += thisCB[106]; C_z += thisCB[130];
+			C_i += thisCB[10]*scl*dim_y; C_j += thisCB[34]*scl*dim_y;  C_k += thisCB[58]*scl*dim_y;
+			C_x += thisCB[82]*scl*dim_y; C_y += thisCB[106]*scl*dim_y; C_z += thisCB[130]*scl*dim_y;
 
 			// node 5 (right,top,far)
-			C_i += thisCB[19]; C_j += thisCB[43];  C_k += thisCB[67];
-			C_x += thisCB[91]; C_y += thisCB[115]; C_z += thisCB[139];
+			C_i += thisCB[19]*scl*dim_y; C_j += thisCB[43]*scl*dim_y;  C_k += thisCB[67]*scl*dim_y;
+			C_x += thisCB[91]*scl*dim_y; C_y += thisCB[115]*scl*dim_y; C_z += thisCB[139]*scl*dim_y;
 
 			// node 7 (left,top,far)
-			C_i += thisCB[22]; C_j += thisCB[46];  C_k += thisCB[70];
-			C_x += thisCB[94]; C_y += thisCB[118]; C_z += thisCB[142];
-
-			C_i *= scl*dim_y; C_j *= scl*dim_y; C_k *= scl*dim_y;
-			C_x *= scl*dim_y; C_y *= scl*dim_y; C_z *= scl*dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[22]*scl*dim_y; C_j += thisCB[46]*scl*dim_y;  C_k += thisCB[70]*scl*dim_y;
+			C_x += thisCB[94]*scl*dim_y; C_y += thisCB[118]*scl*dim_y; C_z += thisCB[142]*scl*dim_y;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Z){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xy; ei++){
 			e = ei;
 
@@ -1525,34 +1434,25 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
 
 			// node 0 (left,bottom,near)
-			C_i = thisCB[2];  C_j = thisCB[26]; C_k = thisCB[50];
-			C_x = thisCB[74]; C_y = thisCB[98]; C_z = thisCB[122];
+			C_i += thisCB[2]*scl*dim_z;  C_j += thisCB[26]*scl*dim_z; C_k += thisCB[50]*scl*dim_z;
+			C_x += thisCB[74]*scl*dim_z; C_y += thisCB[98]*scl*dim_z; C_z += thisCB[122]*scl*dim_z;
 
 			// node 1 (right,bottom,near)
-			C_i += thisCB[5];  C_j += thisCB[29];  C_k += thisCB[53];
-			C_x += thisCB[77]; C_y += thisCB[101]; C_z += thisCB[125];
+			C_i += thisCB[5]*scl*dim_z;  C_j += thisCB[29]*scl*dim_z;  C_k += thisCB[53]*scl*dim_z;
+			C_x += thisCB[77]*scl*dim_z; C_y += thisCB[101]*scl*dim_z; C_z += thisCB[125]*scl*dim_z;
 
 			// node 2 (right,top,near)
-			C_i += thisCB[8];  C_j += thisCB[32];  C_k += thisCB[56];
-			C_x += thisCB[80]; C_y += thisCB[104]; C_z += thisCB[128];
+			C_i += thisCB[8]*scl*dim_z;  C_j += thisCB[32]*scl*dim_z;  C_k += thisCB[56]*scl*dim_z;
+			C_x += thisCB[80]*scl*dim_z; C_y += thisCB[104]*scl*dim_z; C_z += thisCB[128]*scl*dim_z;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[11]; C_j += thisCB[35];  C_k += thisCB[59];
-			C_x += thisCB[83]; C_y += thisCB[107]; C_z += thisCB[131];
-
-			C_i *= scl*dim_z; C_j *= scl*dim_z; C_k *= scl*dim_z;
-			C_x *= scl*dim_z; C_y *= scl*dim_z; C_z *= scl*dim_z;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[11]*scl*dim_z; C_j += thisCB[35]*scl*dim_z;  C_k += thisCB[59]*scl*dim_z;
+			C_x += thisCB[83]*scl*dim_z; C_y += thisCB[107]*scl*dim_z; C_z += thisCB[131]*scl*dim_z;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_YZ){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xz; ei++){
 			e = (ei%dim_x)*dim_y+(ei/dim_x)*dim_xy;
 
@@ -1560,34 +1460,25 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
 
 			// node 2 (right,top,near)
-			C_i = thisCB[8];  C_j = thisCB[32];  C_k = thisCB[56];
-			C_x = thisCB[80]; C_y = thisCB[104]; C_z = thisCB[128];
+			C_i += thisCB[8]*scl*dim_y;  C_j += thisCB[32]*scl*dim_y;  C_k += thisCB[56]*scl*dim_y;
+			C_x += thisCB[80]*scl*dim_y; C_y += thisCB[104]*scl*dim_y; C_z += thisCB[128]*scl*dim_y;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[11]; C_j += thisCB[35];  C_k += thisCB[59];
-			C_x += thisCB[83]; C_y += thisCB[107]; C_z += thisCB[131];
+			C_i += thisCB[11]*scl*dim_y; C_j += thisCB[35]*scl*dim_y;  C_k += thisCB[59]*scl*dim_y;
+			C_x += thisCB[83]*scl*dim_y; C_y += thisCB[107]*scl*dim_y; C_z += thisCB[131]*scl*dim_y;
 
 			// node 5 (right,top,far)
-			C_i += thisCB[20]; C_j += thisCB[44];  C_k += thisCB[68];
-			C_x += thisCB[92]; C_y += thisCB[116]; C_z += thisCB[140];
+			C_i += thisCB[20]*scl*dim_y; C_j += thisCB[44]*scl*dim_y;  C_k += thisCB[68]*scl*dim_y;
+			C_x += thisCB[92]*scl*dim_y; C_y += thisCB[116]*scl*dim_y; C_z += thisCB[140]*scl*dim_y;
 
 			// node 7 (left,top,far)
-			C_i += thisCB[23]; C_j += thisCB[47];  C_k += thisCB[71];
-			C_x += thisCB[95]; C_y += thisCB[119]; C_z += thisCB[143];
-
-			C_i *= scl*dim_y; C_j *= scl*dim_y; C_k *= scl*dim_y;
-			C_x *= scl*dim_y; C_y *= scl*dim_y; C_z *= scl*dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[23]*scl*dim_y; C_j += thisCB[47]*scl*dim_y;  C_k += thisCB[71]*scl*dim_y;
+			C_x += thisCB[95]*scl*dim_y; C_y += thisCB[119]*scl*dim_y; C_z += thisCB[143]*scl*dim_y;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_XZ){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xy; ei++){
 			e = ei;
 
@@ -1595,34 +1486,25 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
 
 			// node 0 (left,bottom,near)
-			C_i = thisCB[0];  C_j = thisCB[24]; C_k = thisCB[48];
-			C_x = thisCB[72]; C_y = thisCB[96]; C_z = thisCB[120];
+			C_i += thisCB[0]*scl*dim_z;  C_j += thisCB[24]*scl*dim_z; C_k += thisCB[48]*scl*dim_z;
+			C_x += thisCB[72]*scl*dim_z; C_y += thisCB[96]*scl*dim_z; C_z += thisCB[120]*scl*dim_z;
 
 			// node 1 (right,bottom,near)
-			C_i += thisCB[3];  C_j += thisCB[27]; C_k += thisCB[51];
-			C_x += thisCB[75]; C_y += thisCB[99]; C_z += thisCB[123];
+			C_i += thisCB[3]*scl*dim_z;  C_j += thisCB[27]*scl*dim_z; C_k += thisCB[51]*scl*dim_z;
+			C_x += thisCB[75]*scl*dim_z; C_y += thisCB[99]*scl*dim_z; C_z += thisCB[123]*scl*dim_z;
 
 			// node 2 (right,top,near)
-			C_i += thisCB[6];  C_j += thisCB[30];  C_k += thisCB[54];
-			C_x += thisCB[78]; C_y += thisCB[102]; C_z += thisCB[126];
+			C_i += thisCB[6]*scl*dim_z;  C_j += thisCB[30]*scl*dim_z;  C_k += thisCB[54]*scl*dim_z;
+			C_x += thisCB[78]*scl*dim_z; C_y += thisCB[102]*scl*dim_z; C_z += thisCB[126]*scl*dim_z;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[9];  C_j += thisCB[33];  C_k += thisCB[57];
-			C_x += thisCB[81]; C_y += thisCB[105]; C_z += thisCB[129];
-
-			C_i *= scl*dim_z; C_j *= scl*dim_z; C_k *= scl*dim_z;
-			C_x *= scl*dim_z; C_y *= scl*dim_z; C_z *= scl*dim_z;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[9]*scl*dim_z;  C_j += thisCB[33]*scl*dim_z;  C_k += thisCB[57]*scl*dim_z;
+			C_x += thisCB[81]*scl*dim_z; C_y += thisCB[105]*scl*dim_z; C_z += thisCB[129]*scl*dim_z;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_XY){
 
-		#pragma omp parallel for private(e,C_i,C_j,C_k,C_x,C_y,C_z,thisCB,scl)
+		#pragma omp parallel for private(e,thisCB) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 		for (ei=0; ei<dim_xz; ei++){
 			e = (ei%dim_x)*dim_y+(ei/dim_x)*dim_xy;
 
@@ -1630,46 +1512,35 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
 
 			// node 2 (right,top,near)
-			C_i = thisCB[6];  C_j = thisCB[30];  C_k = thisCB[54];
-			C_x = thisCB[78]; C_y = thisCB[102]; C_z = thisCB[126];
+			C_i += thisCB[6]*scl*dim_y;  C_j += thisCB[30]*scl*dim_y;  C_k += thisCB[54]*scl*dim_y;
+			C_x += thisCB[78]*scl*dim_y; C_y += thisCB[102]*scl*dim_y; C_z += thisCB[126]*scl*dim_y;
 
 			// node 3 (left,top,near)
-			C_i += thisCB[9];  C_j += thisCB[33];  C_k += thisCB[57];
-			C_x += thisCB[81]; C_y += thisCB[105]; C_z += thisCB[129];
+			C_i += thisCB[9]*scl*dim_y;  C_j += thisCB[33]*scl*dim_y;  C_k += thisCB[57]*scl*dim_y;
+			C_x += thisCB[81]*scl*dim_y; C_y += thisCB[105]*scl*dim_y; C_z += thisCB[129]*scl*dim_y;
 
 			// node 5 (right,top,far)
-			C_i += thisCB[18]; C_j += thisCB[42];  C_k += thisCB[66];
-			C_x += thisCB[90]; C_y += thisCB[114]; C_z += thisCB[138];
+			C_i += thisCB[18]*scl*dim_y; C_j += thisCB[42]*scl*dim_y;  C_k += thisCB[66]*scl*dim_y;
+			C_x += thisCB[90]*scl*dim_y; C_y += thisCB[114]*scl*dim_y; C_z += thisCB[138]*scl*dim_y;
 
 			// node 7 (left,top,far)
-			C_i += thisCB[21]; C_j += thisCB[45];  C_k += thisCB[69];
-			C_x += thisCB[93]; C_y += thisCB[117]; C_z += thisCB[141];
-
-			C_i *= scl*dim_y; C_j *= scl*dim_y; C_k *= scl*dim_y;
-			C_x *= scl*dim_y; C_y *= scl*dim_y; C_z *= scl*dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-				model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-			}
+			C_i += thisCB[21]*scl*dim_y; C_j += thisCB[45]*scl*dim_y;  C_k += thisCB[69]*scl*dim_y;
+			C_x += thisCB[93]*scl*dim_y; C_y += thisCB[117]*scl*dim_y; C_z += thisCB[141]*scl*dim_y;
 		}
 	}
 
 	unsigned int ii;
 
-	#pragma omp parallel for private(ii,C_i,C_j,C_k,C_x,C_y,C_z,d,thisCB,n,scl)
+	#pragma omp parallel for private(ii,thisCB,d,n) reduction(+:C_i,C_j,C_k,C_x,C_y,C_z)
 	for (e=0;e<model->m_nelem;e++){
 
 		thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 		scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
 
-		C_i = 0.0; C_j = 0.0; C_k = 0.0; C_x = 0.0; C_y = 0.0; C_z = 0.0;
-
 		// node 0 (left,bottom,near)
 		n = 1+(e%dim_xy)+((e%dim_xy)/dim_y)+(e/dim_xy)*model->m_nx*model->m_ny;
 		for (ii=0;ii<3;ii++){
-			d = D[model->node_dof_map[n]+ii];
+			d = scl*D[model->node_dof_map[n]+ii];
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
@@ -1677,7 +1548,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 		// node 1 (right,bottom,near)
 		n+=model->m_ny;
 		for (ii=3;ii<6;ii++){
-			d = D[model->node_dof_map[n]+ii-3];
+			d = scl*D[model->node_dof_map[n]+ii-3];
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
@@ -1685,7 +1556,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 		// node 2 (right,top,near)
 		n-=1;
 		for (ii=6;ii<9;ii++){
-			d = D[model->node_dof_map[n]+ii-6];
+			d = scl*D[model->node_dof_map[n]+ii-6];
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
@@ -1693,7 +1564,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 		// node 3 (left,top,near)
 		n-=model->m_ny;
 		for (ii=9;ii<12;ii++){
-			d = D[model->node_dof_map[n]+ii-9];
+			d = scl*D[model->node_dof_map[n]+ii-9];
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
@@ -1701,7 +1572,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 		// node 4 (left,bottom,far)
 		n+=1+model->m_nx*model->m_ny;
 		for (ii=12;ii<15;ii++){
-			d = D[model->node_dof_map[n]+ii-12];
+			d = scl*D[model->node_dof_map[n]+ii-12];
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
@@ -1709,7 +1580,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 		// node 5 (right,bottom,far)
 		n+=model->m_ny;
 		for (ii=15;ii<18;ii++){
-			d = D[model->node_dof_map[n]+ii-15];
+			d = scl*D[model->node_dof_map[n]+ii-15];
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
@@ -1717,7 +1588,7 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 		// node 6 (right,top,far)
 		n-=1;
 		for (ii=18;ii<21;ii++){
-			d = D[model->node_dof_map[n]+ii-18];
+			d = scl*D[model->node_dof_map[n]+ii-18];
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
@@ -1725,23 +1596,18 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 		// node 7 (left,top,far)
 		n-=model->m_ny;
 		for (ii=21;ii<24;ii++){
-			d = D[model->node_dof_map[n]+ii-21];
+			d = scl*D[model->node_dof_map[n]+ii-21];
 			C_i += thisCB[ii]*d;    C_j += thisCB[ii+24]*d; C_k += thisCB[ii+48]*d;
 			C_x += thisCB[ii+72]*d; C_y += thisCB[ii+96]*d; C_z += thisCB[ii+120]*d;
 		}
-		
-		C_i *= scl; C_j *= scl; C_k *= scl;
-	  C_x *= scl; C_y *= scl; C_z *= scl;
-
-		#pragma omp critical
-		{
-			model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-			model->C[x] += C_x; model->C[y] += C_y; model->C[z] += C_z;
-		}
 	}
-
-	model->C[i] /= model->m_nelem; model->C[j] /= model->m_nelem; model->C[k] /= model->m_nelem;
-	model->C[x] /= model->m_nelem; model->C[y] /= model->m_nelem; model->C[z] /= model->m_nelem;
+	
+	model->C[i] = C_i / model->m_nelem;
+	model->C[j] = C_j / model->m_nelem;
+	model->C[k] = C_k / model->m_nelem;
+	model->C[x] = C_x / model->m_nelem;
+	model->C[y] = C_y / model->m_nelem;
+	model->C[z] = C_z / model->m_nelem;
 
 	return;
 }

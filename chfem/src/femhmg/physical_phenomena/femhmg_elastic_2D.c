@@ -401,10 +401,9 @@ void updateC_elastic_2D_thermal_expansion(hmgModel_t *model, cudapcgVar_t * D){
 	var local_alpha[3] = {0.0,0.0,0.0};
 
   var C_i=0.0, C_j=0.0, C_k=0.0;
-  var *pC_i=&stress[0], *pC_j=&stress[1], *pC_k=&stress[2];
   
   // Compute effective stress (similar to updateC)
-	#pragma omp parallel for private(C_i,C_j,C_k,d,thisCB,n)
+	#pragma omp parallel for private(thisCB,d,n) reduction(+:C_i,C_j,C_k)
 	for (e=0;e<model->m_nelem;e++){
 
 		thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
@@ -412,7 +411,7 @@ void updateC_elastic_2D_thermal_expansion(hmgModel_t *model, cudapcgVar_t * D){
 		// node 0 (left,bottom)
 		n = e+1+(e/dim_y);
 		d = D[model->node_dof_map[n]];
-		C_i = thisCB[0]*d; C_j = thisCB[8]*d; C_k = thisCB[16]*d;
+		C_i += thisCB[0]*d; C_j += thisCB[8]*d; C_k += thisCB[16]*d;
 		d = D[model->node_dof_map[n]+1];
 		C_i += thisCB[1]*d; C_j += thisCB[9]*d; C_k += thisCB[17]*d;
 
@@ -436,16 +435,10 @@ void updateC_elastic_2D_thermal_expansion(hmgModel_t *model, cudapcgVar_t * D){
 		C_i += thisCB[6]*d; C_j += thisCB[14]*d; C_k += thisCB[22]*d;
 		d = D[model->node_dof_map[n]+1];
 		C_i += thisCB[7]*d; C_j += thisCB[15]*d; C_k += thisCB[23]*d;
-
-		#pragma omp atomic
-		*pC_i += C_i;
-
-		#pragma omp atomic
-		*pC_j += C_j;
-
-		#pragma omp atomic
-		*pC_k += C_k;
 	}
+	stress[0] = C_i;
+	stress[1] = C_j;
+	stress[2] = C_k;
 
 	// Compute effective strain and add thermal expansion contribution to effective stress
 	for (e=0;e<model->m_nelem;e++){
@@ -479,8 +472,8 @@ void updateC_elastic_2D_thermal_expansion(hmgModel_t *model, cudapcgVar_t * D){
 		strain[2] += local_strain[2];
 		
 		local_alpha[0] = model->alpha[model->elem_material_map[e]];
-	local_alpha[1] = local_alpha[0];
-	local_alpha[2] = 0.0;
+	  local_alpha[1] = local_alpha[0];
+	  local_alpha[2] = 0.0;
 		
 		local_stress[0] = 0.0;
 		local_stress[1] = 0.0;
@@ -506,8 +499,8 @@ void updateC_elastic_2D_thermal_expansion(hmgModel_t *model, cudapcgVar_t * D){
 	// Solve 3x3 system with simple hardcoded gauss elim: alpha = C^-1 *beta
 	var alpha[3], scl;
 	var M[9] = { model->C[0],model->C[1],model->C[2],
-					model->C[3],model->C[4],model->C[5],
-					model->C[6],model->C[7],model->C[8] };
+               model->C[3],model->C[4],model->C[5],
+               model->C[6],model->C[7],model->C[8] };
   
   scl = M[3]/M[0];
   M[4] -= M[1]*scl;
@@ -563,72 +556,45 @@ void updateC_elastic_2D(hmgModel_t *model, cudapcgVar_t * D){
 
 	if (model->m_hmg_flag == HOMOGENIZE_X){
 
-		#pragma omp parallel for private(C_i,C_j,C_k,thisCB)
+		#pragma omp parallel for private(thisCB) reduction(+:C_i,C_j,C_k)
 		for (e=model->m_nelem-model->m_ny+1;e<model->m_nelem;e++){
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 
-			// node 1 (right,bottom)
-			C_i = thisCB[2]; C_j = thisCB[10]; C_k = thisCB[18];
-
-			// node 2 (right,top)
-			C_i += thisCB[4]; C_j += thisCB[12]; C_k += thisCB[20];
-
-			C_i *= dim_x; C_j *= dim_x; C_k *= dim_x;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-			}
+			// nodes 1 and 2 (right,bottom) and (right,top)
+			C_i += ( thisCB[2] +  thisCB[4]) * dim_x;
+			C_j += (thisCB[10] + thisCB[12]) * dim_x;
+			C_k += (thisCB[18] + thisCB[20]) * dim_x;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
 
-		#pragma omp parallel for private(C_i,C_j,C_k,thisCB)
+		#pragma omp parallel for private(thisCB) reduction(+:C_i,C_j,C_k)
 		for (e=0;e<model->m_nelem;e+=dim_y){
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 
-			// node 2 (right,top)
-			C_i = thisCB[5]; C_j = thisCB[13]; C_k = thisCB[21];
-
-			// node 3 (left,top)
-			C_i += thisCB[7]; C_j += thisCB[15]; C_k += thisCB[23];
-
-			C_i *= dim_y; C_j *= dim_y; C_k *= dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-			}
+			// nodes 2 and 3 (right,top) and (left,top)
+			C_i += ( thisCB[5] +  thisCB[7]) * dim_y;
+			C_j += (thisCB[13] + thisCB[15]) * dim_y;
+			C_k += (thisCB[21] + thisCB[23]) * dim_y;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_XY){
 
-		#pragma omp parallel for private(C_i,C_j,C_k,thisCB)
+		#pragma omp parallel for private(thisCB) reduction(+:C_i,C_j,C_k)
 		for (e=0;e<model->m_nelem;e+=dim_y){
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 			
-
-			// node 2 (right,top)
-			C_i = thisCB[4]; C_j = thisCB[12]; C_k = thisCB[20];
-
-			// node 3 (left,top)
-			C_i += thisCB[6]; C_j += thisCB[14]; C_k += thisCB[22];
-
-			C_i *= dim_y; C_j *= dim_y; C_k *= dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-			}
+			// nodes 2 and 3 (right,top) and (left,top)
+			C_i += ( thisCB[4] +  thisCB[6]) * dim_y;
+			C_j += (thisCB[12] + thisCB[14]) * dim_y;
+			C_k += (thisCB[20] + thisCB[22]) * dim_y;
 		}
 	}
 
-	var *pC_i=&(model->C[i]), *pC_j=&(model->C[j]), *pC_k=&(model->C[k]);
-
-	#pragma omp parallel for private(C_i,C_j,C_k,d,thisCB,n)
+	#pragma omp parallel for private(thisCB,n,d) reduction(+:C_i,C_j,C_k)
 	for (e=0;e<model->m_nelem;e++){
 
 		thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
@@ -636,7 +602,7 @@ void updateC_elastic_2D(hmgModel_t *model, cudapcgVar_t * D){
 		// node 0 (left,bottom)
 		n = e+1+(e/dim_y);
 		d = D[model->node_dof_map[n]];
-		C_i = thisCB[0]*d; C_j = thisCB[8]*d; C_k = thisCB[16]*d;
+		C_i += thisCB[0]*d; C_j += thisCB[8]*d; C_k += thisCB[16]*d;
 		d = D[model->node_dof_map[n]+1];
 		C_i += thisCB[1]*d; C_j += thisCB[9]*d; C_k += thisCB[17]*d;
 
@@ -660,24 +626,17 @@ void updateC_elastic_2D(hmgModel_t *model, cudapcgVar_t * D){
 		C_i += thisCB[6]*d; C_j += thisCB[14]*d; C_k += thisCB[22]*d;
 		d = D[model->node_dof_map[n]+1];
 		C_i += thisCB[7]*d; C_j += thisCB[15]*d; C_k += thisCB[23]*d;
-
-		#pragma omp atomic
-		*pC_i += C_i;
-
-		#pragma omp atomic
-		*pC_j += C_j;
-
-		#pragma omp atomic
-		*pC_k += C_k;
 	}
-
-	*pC_i /= model->m_nelem; *pC_j /= model->m_nelem; *pC_k /= model->m_nelem;
+	
+	model->C[i] = C_i / model->m_nelem;
+	model->C[j] = C_j / model->m_nelem;
+	model->C[k] = C_k / model->m_nelem;
 
 	return;
 }
 //------------------------------------------------------------------------------
 void updateC_elastic_2D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
-	unsigned int n;
+  unsigned int n;
 	unsigned int e;
 	unsigned int dim_x = model->m_nx-1;
 	unsigned int dim_y = model->m_ny-1;
@@ -699,72 +658,48 @@ void updateC_elastic_2D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 
 	if (model->m_hmg_flag == HOMOGENIZE_X){
 
-		#pragma omp parallel for private(C_i,C_j,C_k,thisCB,scl)
+		#pragma omp parallel for private(thisCB,scl) reduction(+:C_i,C_j,C_k)
 		for (e=model->m_nelem-model->m_ny+1;e<model->m_nelem;e++){
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
 
-			// node 1 (right,bottom)
-			C_i = thisCB[2]; C_j = thisCB[10]; C_k = thisCB[18];
-
-			// node 2 (right,top)
-			C_i += thisCB[4]; C_j += thisCB[12]; C_k += thisCB[20];
-
-			C_i *= scl*dim_x; C_j *= scl*dim_x; C_k *= scl*dim_x;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-			}
+			// nodes 1 and 2 (right,bottom) and (right,top)
+			C_i += ( thisCB[2] +  thisCB[4]) * scl*dim_x;
+			C_j += (thisCB[10] + thisCB[12]) * scl*dim_x;
+			C_k += (thisCB[18] + thisCB[20]) * scl*dim_x;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
 
-		#pragma omp parallel for private(C_i,C_j,C_k,thisCB,scl)
+		#pragma omp parallel for private(thisCB,scl) reduction(+:C_i,C_j,C_k)
 		for (e=0;e<model->m_nelem;e+=dim_y){
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
 
-			// node 2 (right,top)
-			C_i = thisCB[5]; C_j = thisCB[13]; C_k = thisCB[21];
-
-			// node 3 (left,top)
-			C_i += thisCB[7]; C_j += thisCB[15]; C_k += thisCB[23];
-
-			C_i *= scl*dim_y; C_j *= scl*dim_y; C_k *= scl*dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-			}
+			// nodes 2 and 3 (right,top) and (left,top)
+			C_i += ( thisCB[5] +  thisCB[7]) * scl*dim_y;
+			C_j += (thisCB[13] + thisCB[15]) * scl*dim_y;
+			C_k += (thisCB[21] + thisCB[23]) * scl*dim_y;
 		}
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_XY){
 
-		#pragma omp parallel for private(C_i,C_j,C_k,thisCB,scl)
+		#pragma omp parallel for private(thisCB,scl) reduction(+:C_i,C_j,C_k)
 		for (e=0;e<model->m_nelem;e+=dim_y){
 
 			thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
 			scl = (cudapcgVar_t)(model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min);
-
-			// node 2 (right,top)
-			C_i = thisCB[4]; C_j = thisCB[12]; C_k = thisCB[20];
-
-			// node 3 (left,top)
-			C_i += thisCB[6]; C_j += thisCB[14]; C_k += thisCB[22];
-
-			C_i *= scl*dim_y; C_j *= scl*dim_y; C_k *= scl*dim_y;
-
-			#pragma omp critical
-			{
-				model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-			}
+			
+			// nodes 2 and 3 (right,top) and (left,top)
+			C_i += ( thisCB[4] +  thisCB[6]) * scl*dim_y;
+			C_j += (thisCB[12] + thisCB[14]) * scl*dim_y;
+			C_k += (thisCB[20] + thisCB[22]) * scl*dim_y;
 		}
 	}
 
-	#pragma omp parallel for private(C_i,C_j,C_k,d,thisCB,n,scl)
+	#pragma omp parallel for private(thisCB,scl,n,d) reduction(+:C_i,C_j,C_k)
 	for (e=0;e<model->m_nelem;e++){
 
 		thisCB = &(model->CB[model->elem_material_map[e]*model->m_lclCB_dim]);
@@ -772,41 +707,36 @@ void updateC_elastic_2D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 
 		// node 0 (left,bottom)
 		n = e+1+(e/dim_y);
-		d = D[model->node_dof_map[n]];
-		C_i = thisCB[0]*d; C_j = thisCB[8]*d; C_k = thisCB[16]*d;
-		d = D[model->node_dof_map[n]+1];
+		d = scl*D[model->node_dof_map[n]];
+		C_i += thisCB[0]*d; C_j += thisCB[8]*d; C_k += thisCB[16]*d;
+		d = scl*D[model->node_dof_map[n]+1];
 		C_i += thisCB[1]*d; C_j += thisCB[9]*d; C_k += thisCB[17]*d;
 
 		// node 1 (right,bottom)
 		n+=model->m_ny;
-		d = D[model->node_dof_map[n]];
+		d = scl*D[model->node_dof_map[n]];
 		C_i += thisCB[2]*d; C_j += thisCB[10]*d; C_k += thisCB[18]*d;
-		d = D[model->node_dof_map[n]+1];
+		d = scl*D[model->node_dof_map[n]+1];
 		C_i += thisCB[3]*d; C_j += thisCB[11]*d; C_k += thisCB[19]*d;
 
 		// node 2 (right,top)
 		n-=1;
-		d = D[model->node_dof_map[n]];
+		d = scl*D[model->node_dof_map[n]];
 		C_i += thisCB[4]*d; C_j += thisCB[12]*d; C_k += thisCB[20]*d;
-		d = D[model->node_dof_map[n]+1];
+		d = scl*D[model->node_dof_map[n]+1];
 		C_i += thisCB[5]*d; C_j += thisCB[13]*d; C_k += thisCB[21]*d;
 
 		// node 3 (left,top)
 		n-=model->m_ny;
-		d = D[model->node_dof_map[n]];
+		d = scl*D[model->node_dof_map[n]];
 		C_i += thisCB[6]*d; C_j += thisCB[14]*d; C_k += thisCB[22]*d;
-		d = D[model->node_dof_map[n]+1];
+		d = scl*D[model->node_dof_map[n]+1];
 		C_i += thisCB[7]*d; C_j += thisCB[15]*d; C_k += thisCB[23]*d;
-		
-		C_i *= scl; C_j *= scl; C_k *= scl;
-
-		#pragma omp critical
-		{
-			model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-		}
 	}
-
-	model->C[i] /= model->m_nelem; model->C[j] /= model->m_nelem; model->C[k] /= model->m_nelem;
+	
+	model->C[i] = C_i / model->m_nelem;
+	model->C[j] = C_j / model->m_nelem;
+	model->C[k] = C_k / model->m_nelem;
 
 	return;
 }

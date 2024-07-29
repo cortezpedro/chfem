@@ -361,7 +361,7 @@ void updateC_thermal_3D(hmgModel_t *model, cudapcgVar_t * T){
 	unsigned int dim_yz = dim_y*dim_z;
 
 	unsigned int e, e_id, n;
-	var coeff, C_lcl, C_i, C_j, C_k;
+	var coeff, lcl_C, C_i, C_j, C_k;
 
 	unsigned int i,j,k;
 	if (model->m_hmg_flag == HOMOGENIZE_X){
@@ -373,7 +373,7 @@ void updateC_thermal_3D(hmgModel_t *model, cudapcgVar_t * T){
 	}
 
 	C_i = 0.0; C_j = 0.0; C_k = 0.0;
-	C_lcl = 0.0;
+	lcl_C = 0.0;
 
 	/*
 		ATTENTION:
@@ -386,50 +386,50 @@ void updateC_thermal_3D(hmgModel_t *model, cudapcgVar_t * T){
 		// This loop does the same as
 		/*
 		// Compute local component to add in model->C
-		C_lcl = model->props[model->elem_material_map[e]]*0.25*(model->m_nx-1);
+		lcl_C = model->props[model->elem_material_map[e]]*0.25*(model->m_nx-1);
 
 		// node 1 (right,bottom,near)
-		C_i = C_lcl; C_j = -C_lcl; C_k = C_lcl;
+		C_i = lcl_C; C_j = -lcl_C; C_k = lcl_C;
 
 		// node 2 (right,top,near)
-		C_i += C_lcl; C_j += C_lcl; C_k += C_lcl;
+		C_i += lcl_C; C_j += lcl_C; C_k += lcl_C;
 
 		// node 5 (right,bottom,far)
-		C_i += C_lcl; C_j -= C_lcl; C_k -= C_lcl;
+		C_i += lcl_C; C_j -= lcl_C; C_k -= lcl_C;
 
 		// node 6 (right,top,far)
-		C_i += C_lcl; C_j += C_lcl; C_k -= C_lcl;
+		C_i += lcl_C; C_j += lcl_C; C_k -= lcl_C;
 
 		#pragma omp critical
 		{
 			model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
 		}
 		*/
-		#pragma omp parallel for private(e_id) reduction(+:C_lcl)
+		#pragma omp parallel for private(e_id) reduction(+:lcl_C)
 		for (e=0;e<dim_yz;e++){
 			e_id = (model->m_nx-2)*dim_y+e%dim_y+(e/dim_y)*dim_xy;
-			C_lcl += model->props[model->elem_material_map[e_id]]*(model->m_nx-1);
+			lcl_C += model->props[model->elem_material_map[e_id]]*(model->m_nx-1);
 		}
-		model->C[i] += C_lcl;
+		C_i += lcl_C;
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
 		// Analogous to HOMOGENIZE_X  (uses nodes 2, 3, 6 and 7)
-		#pragma omp parallel for private(e_id) reduction(+:C_lcl)
+		#pragma omp parallel for private(e_id) reduction(+:lcl_C)
 		for (e=0;e<dim_xz;e++){
 			e_id = (e%dim_x)*dim_y+(e/dim_x)*dim_xy;
-			C_lcl += model->props[model->elem_material_map[e_id]]*(model->m_ny-1);
+			lcl_C += model->props[model->elem_material_map[e_id]]*(model->m_ny-1);
 		}
-		model->C[j] += C_lcl;
+		C_j += lcl_C;
 	} else if (model->m_hmg_flag == HOMOGENIZE_Z){
 		// Analogous to HOMOGENIZE_X  (uses nodes 0, 1, 2 and 3)
-		#pragma omp parallel for reduction(+:C_lcl)
+		#pragma omp parallel for reduction(+:lcl_C)
 		for (e=0;e<dim_xy;e++){
-			C_lcl += model->props[model->elem_material_map[e]]*(model->m_nz-1);
+			lcl_C += model->props[model->elem_material_map[e]]*(model->m_nz-1);
 		}
-		model->C[k] += C_lcl;
+		C_k += lcl_C;
 	}
 
-	#pragma omp parallel for private(C_i,C_j,C_k,n,coeff,C_lcl)
+	#pragma omp parallel for private(n,coeff,lcl_C) reduction(+:C_i,C_j,C_k)
 	for (e=0;e<model->m_nelem;e++){
 
 		// Compute coefficient of this element's flux matrix
@@ -437,49 +437,62 @@ void updateC_thermal_3D(hmgModel_t *model, cudapcgVar_t * T){
 
 		// node 0 (left,bottom,near)
 		n = 1+(e%dim_xy)+((e%dim_xy)/dim_y)+(e/dim_xy)*model->m_nx*model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i = -C_lcl; C_j = -C_lcl; C_k = C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += -lcl_C;
+		C_j += -lcl_C;
+		C_k += lcl_C;
 
 		// node 1 (right,bottom,near)
 		n+=model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i += C_lcl; C_j -= C_lcl; C_k += C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i +=  lcl_C;
+		C_j += -lcl_C;
+		C_k +=  lcl_C;
 
 		// node 2 (right,top,near)
 		n-=1;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i += C_lcl; C_j += C_lcl; C_k += C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += lcl_C;
+		C_j += lcl_C;
+		C_k += lcl_C;
 
 		// node 3 (left,top,near)
 		n-=model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i -= C_lcl; C_j += C_lcl; C_k += C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += -lcl_C;
+		C_j +=  lcl_C;
+		C_k +=  lcl_C;
 
 		// node 4 (left,bottom,far)
 		n+=1+model->m_nx*model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i -= C_lcl; C_j -= C_lcl; C_k -= C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += -lcl_C;
+		C_j += -lcl_C;
+		C_k += -lcl_C;
 
 		// node 5 (right,bottom,far)
 		n+=model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i += C_lcl; C_j -= C_lcl; C_k -= C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i +=  lcl_C;
+		C_j += -lcl_C;
+		C_k += -lcl_C;
 
 		// node 6 (right,top,far)
 		n-=1;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i += C_lcl; C_j += C_lcl; C_k -= C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i +=  lcl_C;
+		C_j +=  lcl_C;
+		C_k += -lcl_C;
 
 		// node 7 (left,top,far)
 		n-=model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i -= C_lcl; C_j += C_lcl; C_k -= C_lcl;
-
-		#pragma omp critical
-		{
-			model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-		}
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += -lcl_C;
+		C_j +=  lcl_C;
+		C_k += -lcl_C;
 	}
+	
+	model->C[i] = C_i; model->C[j] = C_j; model->C[k] = C_k;
 
 	model->C[i] /= model->m_nelem; model->C[j] /= model->m_nelem; model->C[k] /= model->m_nelem;
 
@@ -495,7 +508,7 @@ void updateC_thermal_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * T){
 	unsigned int dim_yz = dim_y*dim_z;
 
 	unsigned int e, e_id, n;
-	var coeff, C_lcl, C_i, C_j, C_k;
+	var coeff, lcl_C, C_i, C_j, C_k;
 
 	unsigned int i,j,k;
 	if (model->m_hmg_flag == HOMOGENIZE_X){
@@ -507,7 +520,7 @@ void updateC_thermal_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * T){
 	}
 
 	C_i = 0.0; C_j = 0.0; C_k = 0.0;
-	C_lcl = 0.0;
+	lcl_C = 0.0;
 
 	/*
 		ATTENTION:
@@ -520,100 +533,113 @@ void updateC_thermal_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * T){
 		// This loop does the same as
 		/*
 		// Compute local component to add in model->C
-		C_lcl = model->props[model->elem_material_map[e]]*0.25*(model->m_nx-1);
+		lcl_C = model->props[model->elem_material_map[e]]*0.25*(model->m_nx-1);
 
 		// node 1 (right,bottom,near)
-		C_i = C_lcl; C_j = -C_lcl; C_k = C_lcl;
+		C_i = lcl_C; C_j = -lcl_C; C_k = lcl_C;
 
 		// node 2 (right,top,near)
-		C_i += C_lcl; C_j += C_lcl; C_k += C_lcl;
+		C_i += lcl_C; C_j += lcl_C; C_k += lcl_C;
 
 		// node 5 (right,bottom,far)
-		C_i += C_lcl; C_j -= C_lcl; C_k -= C_lcl;
+		C_i += lcl_C; C_j -= lcl_C; C_k -= lcl_C;
 
 		// node 6 (right,top,far)
-		C_i += C_lcl; C_j += C_lcl; C_k -= C_lcl;
+		C_i += lcl_C; C_j += lcl_C; C_k -= lcl_C;
 
 		#pragma omp critical
 		{
 			model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
 		}
 		*/
-		#pragma omp parallel for private(e_id) reduction(+:C_lcl)
+		#pragma omp parallel for private(e_id) reduction(+:lcl_C)
 		for (e=0;e<dim_yz;e++){
 			e_id = (model->m_nx-2)*dim_y+e%dim_y+(e/dim_y)*dim_xy;
-			C_lcl += (model->density_map[e_id]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min)*(model->m_nx-1);
+			lcl_C += (model->density_map[e_id]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min)*(model->m_nx-1);
 		}
-		model->C[i] += C_lcl;
+		C_i += lcl_C;
 
 	} else if (model->m_hmg_flag == HOMOGENIZE_Y){
 		// Analogous to HOMOGENIZE_X  (uses nodes 2, 3, 6 and 7)
-		#pragma omp parallel for private(e_id) reduction(+:C_lcl)
+		#pragma omp parallel for private(e_id) reduction(+:lcl_C)
 		for (e=0;e<dim_xz;e++){
 			e_id = (e%dim_x)*dim_y+(e/dim_x)*dim_xy;
-			C_lcl += (model->density_map[e_id]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min)*(model->m_ny-1);
+			lcl_C += (model->density_map[e_id]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min)*(model->m_ny-1);
 		}
-		model->C[j] += C_lcl;
+		C_j += lcl_C;
 	} else if (model->m_hmg_flag == HOMOGENIZE_Z){
 		// Analogous to HOMOGENIZE_X  (uses nodes 0, 1, 2 and 3)
-		#pragma omp parallel for reduction(+:C_lcl)
+		#pragma omp parallel for reduction(+:lcl_C)
 		for (e=0;e<dim_xy;e++){
-			C_lcl += (model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min)*(model->m_nz-1);
+			lcl_C += (model->density_map[e_id]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min)*(model->m_nz-1);
 		}
-		model->C[k] += C_lcl;
+		C_k += lcl_C;
 	}
 
-	#pragma omp parallel for private(C_i,C_j,C_k,n,coeff,C_lcl)
+	#pragma omp parallel for private(n,coeff,lcl_C) reduction(+:C_i,C_j,C_k)
 	for (e=0;e<model->m_nelem;e++){
 
 		// Compute coefficient of this element's flux matrix
-		coeff = (model->density_map[e]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min)*0.25;
+		coeff = (model->density_map[e_id]*(1.0/65535.0)*(model->density_max-model->density_min) + model->density_min)*0.25;
 
 		// node 0 (left,bottom,near)
 		n = 1+(e%dim_xy)+((e%dim_xy)/dim_y)+(e/dim_xy)*model->m_nx*model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i = -C_lcl; C_j = -C_lcl; C_k = C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += -lcl_C;
+		C_j += -lcl_C;
+		C_k += lcl_C;
 
 		// node 1 (right,bottom,near)
 		n+=model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i += C_lcl; C_j -= C_lcl; C_k += C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i +=  lcl_C;
+		C_j += -lcl_C;
+		C_k +=  lcl_C;
 
 		// node 2 (right,top,near)
 		n-=1;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i += C_lcl; C_j += C_lcl; C_k += C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += lcl_C;
+		C_j += lcl_C;
+		C_k += lcl_C;
 
 		// node 3 (left,top,near)
 		n-=model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i -= C_lcl; C_j += C_lcl; C_k += C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += -lcl_C;
+		C_j +=  lcl_C;
+		C_k +=  lcl_C;
 
 		// node 4 (left,bottom,far)
 		n+=1+model->m_nx*model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i -= C_lcl; C_j -= C_lcl; C_k -= C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += -lcl_C;
+		C_j += -lcl_C;
+		C_k += -lcl_C;
 
 		// node 5 (right,bottom,far)
 		n+=model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i += C_lcl; C_j -= C_lcl; C_k -= C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i +=  lcl_C;
+		C_j += -lcl_C;
+		C_k += -lcl_C;
 
 		// node 6 (right,top,far)
 		n-=1;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i += C_lcl; C_j += C_lcl; C_k -= C_lcl;
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i +=  lcl_C;
+		C_j +=  lcl_C;
+		C_k += -lcl_C;
 
 		// node 7 (left,top,far)
 		n-=model->m_ny;
-		C_lcl = coeff*T[model->node_dof_map[n]];
-		C_i -= C_lcl; C_j += C_lcl; C_k -= C_lcl;
-
-		#pragma omp critical
-		{
-			model->C[i] += C_i; model->C[j] += C_j; model->C[k] += C_k;
-		}
+		lcl_C = coeff*T[model->node_dof_map[n]];
+		C_i += -lcl_C;
+		C_j +=  lcl_C;
+		C_k += -lcl_C;
 	}
+	
+	model->C[i] = C_i; model->C[j] = C_j; model->C[k] = C_k;
 
 	model->C[i] /= model->m_nelem; model->C[j] /= model->m_nelem; model->C[k] /= model->m_nelem;
 
