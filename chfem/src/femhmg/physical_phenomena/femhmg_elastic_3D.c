@@ -1121,12 +1121,12 @@ void updateC_elastic_3D(hmgModel_t *model, cudapcgVar_t * D){
 			C_x += thisCB[75]*dim_x; C_y += thisCB[99]*dim_x; C_z += thisCB[123]*dim_x;
 
 			// node 2 (right,top,near)
-			C_i += thisCB[6]*dim_x;  C_j += thisCB[30]*dim_x;  C_k += thisCB[54];
-			C_x += thisCB[78]*dim_x; C_y += thisCB[102]*dim_x; C_z += thisCB[126];
+			C_i += thisCB[6]*dim_x;  C_j += thisCB[30]*dim_x;  C_k += thisCB[54]*dim_x;
+			C_x += thisCB[78]*dim_x; C_y += thisCB[102]*dim_x; C_z += thisCB[126]*dim_x;
 
 			// node 5 (right,bottom,far)
-			C_i += thisCB[15]; C_j += thisCB[39];  C_k += thisCB[63]*dim_x;
-			C_x += thisCB[87]; C_y += thisCB[111]; C_z += thisCB[135]*dim_x;
+			C_i += thisCB[15]*dim_x; C_j += thisCB[39]*dim_x;  C_k += thisCB[63]*dim_x;
+			C_x += thisCB[87]*dim_x; C_y += thisCB[111]*dim_x; C_z += thisCB[135]*dim_x;
 
 			// node 6 (right,top,far)
 			C_i += thisCB[18]*dim_x; C_j += thisCB[42]*dim_x;  C_k += thisCB[66]*dim_x;
@@ -1386,12 +1386,12 @@ void updateC_elastic_3D_ScalarDensityField(hmgModel_t *model, cudapcgVar_t * D){
 			C_x += thisCB[75]*scl*dim_x; C_y += thisCB[99]*scl*dim_x; C_z += thisCB[123]*scl*dim_x;
 
 			// node 2 (right,top,near)
-			C_i += thisCB[6]*scl*dim_x;  C_j += thisCB[30]*scl*dim_x;  C_k += thisCB[54];
-			C_x += thisCB[78]*scl*dim_x; C_y += thisCB[102]*scl*dim_x; C_z += thisCB[126];
+			C_i += thisCB[6]*scl*dim_x;  C_j += thisCB[30]*scl*dim_x;  C_k += thisCB[54]*dim_x;
+			C_x += thisCB[78]*scl*dim_x; C_y += thisCB[102]*scl*dim_x; C_z += thisCB[126]*dim_x;
 
 			// node 5 (right,bottom,far)
-			C_i += thisCB[15]; C_j += thisCB[39];  C_k += thisCB[63]*scl*dim_x;
-			C_x += thisCB[87]; C_y += thisCB[111]; C_z += thisCB[135]*scl*dim_x;
+			C_i += thisCB[15]*dim_x; C_j += thisCB[39]*dim_x;  C_k += thisCB[63]*scl*dim_x;
+			C_x += thisCB[87]*dim_x; C_y += thisCB[111]*dim_x; C_z += thisCB[135]*scl*dim_x;
 
 			// node 6 (right,top,far)
 			C_i += thisCB[18]*scl*dim_x; C_j += thisCB[42]*scl*dim_x;  C_k += thisCB[66]*scl*dim_x;
