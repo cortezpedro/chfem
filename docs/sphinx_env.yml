@@ -5,7 +5,7 @@ channels:
 dependencies:
   - python
   - pip
-  - sphinx
+  - sphinx=7.4.7
   - sphinx_rtd_theme
   - myst-parser
   - nbsphinx
