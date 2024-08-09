@@ -1,9 +1,5 @@
 import numpy as np
 import pyvista as pv
-import ctypes
-
-# global variable to reference img_utils.h library
-IMG_UTILS = ctypes.CDLL('utils/c/img_utils.so')
 
 def periodic_index(shape, kk, ii, jj):
     slices, rows, cols = shape
@@ -43,61 +39,6 @@ def copy_nf(nf_original, nf_temp, shape):
     
 def load_raw(shape, filename):
   return np.reshape( np.fromfile(filename, dtype='uint8'), shape )
-
-def map_pore_space(shape, mask):
-
-  slices, rows, cols = shape
-  v = np.zeros((rows*cols*slices), dtype='uint8')
-  p = np.zeros((rows*cols*slices), dtype='uint8')
-  nos_poro = np.zeros((1),dtype='uint32')
-  nos_borda = np.zeros((1),dtype='uint32')
-
-  IMG_UTILS.map_pore_space( ctypes.c_void_p(v.ctypes.data),
-                            ctypes.c_void_p(p.ctypes.data),
-                            ctypes.c_void_p(nos_poro.ctypes.data),
-                            ctypes.c_void_p(nos_borda.ctypes.data),
-                            ctypes.c_uint32(rows), ctypes.c_uint32(cols), ctypes.c_uint32(slices),
-                            ctypes.c_void_p(mask.ctypes.data)  )
-
-  nos_poro = nos_poro[0]
-  nos_borda = nos_borda[0]
-
-  v = np.reshape( v, shape ).astype('bool')
-  p = np.reshape( p, shape ).astype('bool')
-
-  return v, p, nos_poro, nos_borda
-
-def field_to_pore_space(shape, mask, field, n):
-
-  slices, rows, cols = shape
-
-  x = np.zeros( (n), dtype='float64')
-
-  mask  = np.reshape( mask , (mask.size ) )
-  field = np.reshape( field, (field.size) )
-
-  IMG_UTILS.field_to_pore_space( ctypes.c_void_p(x.ctypes.data), ctypes.c_void_p(field.ctypes.data),
-                                 ctypes.c_uint32(rows), ctypes.c_uint32(cols), ctypes.c_uint32(slices),
-                                 ctypes.c_void_p(mask.ctypes.data) )
-
-  return x
-
-def make_fibers(shape, lines, radius=None, clr=255, img=None):
-    slices, rows, cols = shape
-    if img is None:
-        img = np.zeros(shape,dtype='uint8')
-    if radius is None:
-        radius = (rows+cols+slices)/30
-    n_lines = len(lines)
-    lines_arr = np.array( lines, dtype='uint32' ).flatten()
-    img = np.reshape( img, (rows*cols*slices) )
-    IMG_UTILS.make_fibers( ctypes.c_void_p(img.ctypes.data),
-                           ctypes.c_void_p(lines_arr.ctypes.data), ctypes.c_uint32(n_lines), ctypes.c_float(radius),
-                           ctypes.c_uint8(clr),
-                           ctypes.c_uint32(rows), ctypes.c_uint32(cols), ctypes.c_uint32(slices) )
-    
-    img = np.reshape( img, shape )    
-    return img
 
 def pv_plot3D(img, flip_z=False, cmap='Greys', opacity=None, label='voxels', outline=True, scalar_bar_args=None, render_now=True):
   grid = pv.ImageData()
