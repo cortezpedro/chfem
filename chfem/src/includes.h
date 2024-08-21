@@ -41,8 +41,6 @@ typedef struct _input{
 
   var eff_coeff[42];  // to return in python API
   // obs: largest size = 6x6 elasticity + 6 thermal_expansion
-  
-  unsigned int num_of_thermal_expansion_coeffs;
 
 } chfemgpuInput_t;
 

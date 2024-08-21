@@ -63,6 +63,9 @@ int main(int argc, char *argv[]) {
     free(user_input);
     return -1;
   }
+
+  // Finish femhmg API. (ATTENTION: Will free dynamic arrays from memory)
+  hmgEnd();
   
   // Free input struct
   free(user_input);
@@ -138,13 +141,10 @@ int runAnalysis(chfemgpuInput_t * user_input){
   
   // get pointer to effective thermal expansion vector and use it to copy data to local array
   mtx_ptr = hmgGetThermalExpansion();
+  unsigned int alpha_dim = hmgGetThermalExpansionDim();
   if (mtx_ptr != NULL){
-    user_input->num_of_thermal_expansion_coeffs = hmgGetThermalExpansionDim();
-    for (unsigned int i=0; i < user_input->num_of_thermal_expansion_coeffs; i++) user_input->eff_coeff[C_dim+i] = mtx_ptr[i];
+    for (unsigned int i=0; i < alpha_dim; i++) user_input->eff_coeff[C_dim+i] = mtx_ptr[i];
   }
-
-  // Finish femhmg API. (ATTENTION: Will free dynamic arrays from memory)
-  hmgEnd();
 
   printf("#######################################################\n");
 
@@ -318,7 +318,6 @@ void initDefaultInput(chfemgpuInput_t * user_input){
   user_input->stopcrit_flag = 0;
   user_input->poremap_flag = 1;
   user_input->xreduce_flag = 2;
-  user_input->num_of_thermal_expansion_coeffs=0;
   return;
 }
 //------------------------------------------------------------------------------

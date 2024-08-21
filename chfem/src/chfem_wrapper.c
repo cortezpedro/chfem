@@ -31,31 +31,41 @@ static PyObject* chfem_run(PyObject* self, PyObject *args) {
         free(user_input);
         return NULL;
     }
+
+    // homogenization analyses
     if (runAnalysis(user_input) != 0) {
         free(user_input);
         return NULL;
     }
 
-    // Create a Python list to return the effective coefficients
-    unsigned int n;
-    if (analysis_type == 0 || analysis_type == 2) n = 3; // thermal or fluid
-    else n = 6;  // elastic
-    
+    // Determine dimensions of effective tensor to be returned
+    unsigned int C_dim = hmgGetConstitutiveMtxDim();
+    unsigned int C_n;
+    switch (C_dim){
+        case  4: C_n=2; break; // THERMAL_2D and FLUID_2D
+        case  9: C_n=3; break; // ELASTIC_2D, THERMAL_3D and FLUID_3D
+        case 36: C_n=6; break; // ELASTIC_3D
+        default: C_n=0;         // ERROR
+    }
     // for thermal expansion coefficients
-    unsigned int alpha_n = user_input->num_of_thermal_expansion_coeffs;
+    unsigned int alpha_n = hmgGetThermalExpansionDim();
 
+    // Finish femhmg API. (ATTENTION: Will free dynamic arrays from memory)
+    hmgEnd();
+
+    // Create a Python list to return the effective coefficients
     // will store constitutive matrix + thermal expansion in list to be returned
-    PyObject* list = PyList_New(n + (alpha_n>0) );
+    PyObject* list = PyList_New( C_n + (alpha_n>0) );
     if (!list) return NULL;
     PyObject* row_list = NULL;
-    for (unsigned int i = 0; i < n; i++) {
-        row_list = PyList_New(n);
+    for (unsigned int i = 0; i < C_n; i++) {
+        row_list = PyList_New(C_n);
         if (!row_list) {
             Py_DECREF(list);
             return NULL;
         }
-        for (unsigned int j = 0; j < n; j++) {
-            PyObject* num = PyFloat_FromDouble(user_input->eff_coeff[i*n + j]);
+        for (unsigned int j = 0; j < C_n; j++) {
+            PyObject* num = PyFloat_FromDouble(user_input->eff_coeff[i*C_n + j]);
             if (!num) {
                 Py_DECREF(row_list);
                 Py_DECREF(list);
@@ -66,7 +76,7 @@ static PyObject* chfem_run(PyObject* self, PyObject *args) {
         PyList_SetItem(list, i, row_list);
     }
     
-    // add thermal expansion coefficients to the last (n-th) row
+    // add thermal expansion coefficients to the last row
     if (alpha_n > 0){
       row_list = PyList_New(alpha_n);
       if (!row_list) {
@@ -74,7 +84,7 @@ static PyObject* chfem_run(PyObject* self, PyObject *args) {
           return NULL;
       }
       for (unsigned int j = 0; j < alpha_n; j++) {
-          PyObject* num = PyFloat_FromDouble(user_input->eff_coeff[n*n + j]);
+          PyObject* num = PyFloat_FromDouble(user_input->eff_coeff[C_dim + j]);
           if (!num) {
               Py_DECREF(row_list);
               Py_DECREF(list);
@@ -82,7 +92,7 @@ static PyObject* chfem_run(PyObject* self, PyObject *args) {
           }
           PyList_SetItem(row_list, j, num);
       }
-      PyList_SetItem(list, n, row_list);
+      PyList_SetItem(list, C_n, row_list);
     }
 
     free(user_input);
