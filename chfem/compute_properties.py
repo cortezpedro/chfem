@@ -5,7 +5,7 @@ import tempfile
 import os
 
 def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=None, solver_tolerance=1e-6, solver_maxiter=10000,
-                     precondition=True, type_of_rhs=0, refinement=1, direction='all', output_fields=None, nf_filepath=None):
+                     precondition=True, type_of_rhs=0, refinement=1, xreduce='full', direction='all', output_fields=None, nf_filepath=None):
     """Computes the effective property of a material using chfem.
 
     This function calculates the effective thermal conductivity, linear elasticity,
@@ -21,9 +21,7 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     :type mat_props: dict
     :param voxel_size: The edge length of each voxel in the domain, defaults to 1e-6 meters.
     :type voxel_size: float, optional
-    :param solver: The type of solver to use ('cg' for Conjugate Gradient, 'minres' for MINimal RESidual). 
-        Defaults to 'cg' for conductivity and elasticity, and 'minres' for permeability. 
-        Options: 'cg', 'minres' (5 vectors implementations, faster but more memory), 'cg3', 'minres3' (3 vectors, slower but less memory), 'cg2', 'minres2' (2 vectors, less memory but not fields output).
+    :param solver: The type of solver to use ('cg' for Conjugate Gradient, 'minres' for MINimal RESidual). Defaults to 'cg' for conductivity and elasticity, and 'minres' for permeability. Options: 'cg', 'minres' (5 vectors implementations, faster but more memory), 'cg3', 'minres3' (3 vectors, slower but less memory), 'cg2', 'minres2' (2 vectors, less memory but not fields output).
     :type solver: str, optional
     :param solver_tolerance: The tolerance for the solver convergence criterion, defaults to 1e-6.
     :type solver_tolerance: float, optional
@@ -35,6 +33,8 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     :type type_of_rhs: int, optional
     :param refinement: Refinement level for the domain discretization, defaults to 1.
     :type refinement: int, optional
+    :param xreduce: Reduction strategy for 2-vector solvers ('full', 'diag', float: stablization factor ), defaults to 'full'.
+    :type xreduce: str or float, optional
     :param direction: Direction for calculating the property ('x', 'y', 'z', 'yz', 'xz', 'xy', 'all'), defaults to 'all'.
     :type direction: str, optional
     :param output_fields: File path to output the fields (e.g., displacement, temperature), defaults to None.
@@ -88,6 +88,18 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     if solver in ['cg2','minres2'] and ( output_fields_flag or not property == 'permeability'):
         raise ValueError(f"Invalid solver type: {solver}. Two-vectors solvers do not produce fields to be exported, nor are implemented for conductivy or elasticity analyses.")
     solver_type = solvers[solver]
+    
+    xreduce_flag=2
+    xreduce_flags = { 'full': 2,  'diag': 1 }
+    if xreduce in xreduce_flags:
+      xreduce_flag = xreduce_flags[xreduce]
+      xreduce=1.e-14 # default value, will not be used in this scenario
+    else:
+      if 'float' not in str(type(xreduce)):
+        raise ValueError(f"Invalid xreduce parameter: {xreduce}. Expected 'full', 'diag', or a float.")
+      xreduce_flag = 0
+      xreduce = float(xreduce) # make sure it is a simple float type (might be numpy)
+      
 
     if nf_filepath is not None:
         if os.path.exists(nf_filepath):
@@ -122,7 +134,9 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
                         voxel_size=voxel_size, solver_type=solver_type, 
                         rhs_type=type_of_rhs, refinement=refinement,
                         export_raw=False, export_nf=True, solver_tolerance=solver_tolerance, 
-                        solver_maxiter=solver_maxiter, tmp_nf_file=tmp_nf_file)
+                        solver_maxiter=solver_maxiter,
+                        xreduce_scale_factor=xreduce,
+                        tmp_nf_file=tmp_nf_file)
         
         # print(tmp_nf_file.read().decode('utf-8'))
         nf_filename = tmp_nf_file.name
@@ -132,7 +146,7 @@ def compute_property(property, array, mat_props=None, voxel_size=1e-6, solver=No
     array = np.ascontiguousarray(np.reshape(array,(array.size)))
 
     print("Calling chfem wrapper")
-    eff_coeff = run(array, nf_filename, analysis_type, direction_int, solver_type, precondition, output_fields_flag)
+    eff_coeff = run(array, nf_filename, analysis_type, direction_int, solver_type, precondition, output_fields_flag, xreduce_flag)
     
     if nf_filepath is None:
         tmp_nf_file.close(); os.remove(tmp_nf_file.name) # removing temporary .nf file

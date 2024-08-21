@@ -208,7 +208,9 @@ def import_stress_field_from_chfem(filename, domain_shape, rotate_domain=False, 
 def export_for_chfem(filename, array, analysis_type, mat_props=None,
                      voxel_size=1, solver_type=0, rhs_type=0, refinement=1,
                      export_raw=True, export_nf=True, 
-                     solver_tolerance=1.e-6, solver_maxiter=10000, tmp_nf_file=None):
+                     solver_tolerance=1.e-6, solver_maxiter=10000,
+                     xreduce_scale_factor=1.e-14,
+                     tmp_nf_file=None):
     """ Export a numpy array to run an analysis in chfem
 
         :param filename: filepath and name
@@ -233,6 +235,8 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
         :type solver_tolerance: float
         :param solver_maxiter: maximum number of iterations
         :type solver_maxiter: int
+        :param xreduce_scale_factor: stabilization factor for xreduce in 2-vector solvers
+        :type xreduce_scale_factor: float
         :param tmp_nf_file: only for use within the python API
         :type tmp_nf_file: file
         
@@ -305,6 +309,8 @@ def export_for_chfem(filename, array, analysis_type, mat_props=None,
     
     if thermal_expansion != []:
       jdata["thermal_expansion"] = thermal_expansion
+      
+    jdata["xreduce_scale_factor"] = xreduce_scale_factor
 
     if export_nf:  # for chfem
         sText = ''

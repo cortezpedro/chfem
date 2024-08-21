@@ -6,11 +6,11 @@
 
 static PyObject* chfem_run(PyObject* self, PyObject *args) {
     char *tmp_nf_file;
-    int analysis_type, direction, solver, precondition, output_fields;
+    int analysis_type, direction, solver, precondition, output_fields, xreduce;
     PyArrayObject *in_nparray = NULL;
 
     // Parse the Python arguments to get a string and a numpy array
-    if (!PyArg_ParseTuple(args, "O!siiiii", &PyArray_Type, &in_nparray, &tmp_nf_file, &analysis_type, &direction, &solver, &precondition, &output_fields)) {
+    if (!PyArg_ParseTuple(args, "O!siiiiii", &PyArray_Type, &in_nparray, &tmp_nf_file, &analysis_type, &direction, &solver, &precondition, &output_fields, &xreduce)) {
         return NULL; // Return NULL to indicate a failure in parsing arguments
     }
 
@@ -22,6 +22,7 @@ static PyObject* chfem_run(PyObject* self, PyObject *args) {
     user_input->solver_flag = solver;
     user_input->preconditioner_flag = precondition;
     user_input->exportFields_flag = output_fields;
+    user_input->xreduce_flag = xreduce;
 
     // Initialize FEM model for homogenization
     if (!hmgInit(tmp_nf_file, NULL, NULL, PyArray_DATA(in_nparray))){
