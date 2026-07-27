@@ -86,7 +86,7 @@ int runAnalysis(chfemgpuInput_t * user_input){
   // Set pore mapping strategy flag (used in permeability analysis)
   if (!hmgSetPoreMappingStrategy(user_input->poremap_flag)){
     printf("ERROR: Failed to set \"poremap_flag\"=%d.\nProcess aborted.\n",user_input->poremap_flag);
-    hmgEnd(&(user_input->eff_coeff));
+    hmgEnd();
     free(user_input);
     return -1;
   }

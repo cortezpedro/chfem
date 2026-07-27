@@ -11,14 +11,14 @@ class CustomBuildExt(build_ext):
         ext = self.extensions[0]
         for source in ext.sources:
             if source.endswith(".cu"):
-                compile_command = f"nvcc -allow-unsupported-compiler -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
+                compile_command = f"nvcc -rdc=true -allow-unsupported-compiler -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
             elif source.endswith(".c"):
                 if 'wrapper' not in source:
-                    compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
+                    compile_command = f"nvcc -rdc=true -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}"
                 else:  # wrapper needs Python.h and numpy/core
                     import numpy as np
                     self.include_dirs.append(np.get_include())
-                    compile_command = f"nvcc -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}" + \
+                    compile_command = f"nvcc -rdc=true -O3 -DTESTING_STENCIL -Xcompiler -fPIC,-fopenmp -c {source} -odir {os.path.abspath(self.build_temp)}" + \
                         ' '.join([f" -I{include_dir}" for include_dir in self.include_dirs])
             else:  # skip other files
                 continue
@@ -31,7 +31,7 @@ class CustomBuildExt(build_ext):
         built_objects = glob.glob(os.path.join(self.build_temp, "*.o*"))
         lib_filename = os.path.join(self.build_lib, self.ext_map['wrapper']._file_name)
         Path(os.path.split(lib_filename)[0]).mkdir(parents=True, exist_ok=True)
-        linker_command = rf"nvcc -Xcompiler -fopenmp -shared -o {lib_filename} {' '.join(built_objects)}" + \
+        linker_command = rf"nvcc -Xcompiler -fopenmp -lcudart -shared -o {lib_filename} {' '.join(built_objects)}" + \
             ' '.join([f" -L{library_dir}" for library_dir in self.library_dirs]) 
         print(linker_command)
         subprocess.check_call(linker_command, shell=True)
