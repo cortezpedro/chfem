@@ -3,10 +3,10 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.12
+  - python<=3.14
   - pip
   - sphinx=7.4.7
-  - docutils<=0.20
+  - docutils=0.20
   - sphinx_rtd_theme
   - myst-parser
   - nbsphinx
