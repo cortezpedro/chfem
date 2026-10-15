@@ -19,10 +19,20 @@ The program follows a lightweight matrix-free approach to image-based finite ele
   <img src="https://github.com/cortezpedro/chfem/raw/dev/docs/source/chfem_example.png" width="100%"></img>
 </p>
 
-If you use `chfem` in your research, please use the following BibTeX entries to cite 
-[our paper](https://doi.org/10.1016/j.commatsci.2023.112021):
+If you use `chfem` in your research, please use the one of the following BibTeX entries to cite 
+our papers [(1)](https://doi.org/10.1016/j.cma.2024.117559) [(2)](https://doi.org/10.1016/j.commatsci.2023.112021):
 
 ```Bibtex
+@article{chfemPermeability2025,
+    title = {Enabling FEM-based absolute permeability estimation in giga-voxel porous media with a single GPU},
+    author = {Pedro Cortez Fetter Lopes and Federico Semeraro and André Maués Brabo Pereira and Ricardo Leiderman},
+    journal = {Computer Methods in Applied Mechanics and Engineering},
+    volume = {434},
+    pages = {117559},
+    year = {2025},
+    publisher={Elsevier}
+}
+
 @article{toolkit2023,
     title = {Simulation toolkit for digital material characterization of large image-based microstructures},
     author = {Pedro C.F. Lopes and Rafael S. Vianna and Victor W. Sapucaia and Federico Semeraro and Ricardo Leiderman and André M.B. Pereira},
