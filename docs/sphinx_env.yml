@@ -6,6 +6,7 @@ dependencies:
   - python
   - pip
   - sphinx=7.4.7
+  - docutils<0.22
   - sphinx_rtd_theme
   - myst-parser
   - nbsphinx
